@@ -1,0 +1,118 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- In-app cheat/debug menu (`CheatsScreen`, `CheatPlayer`/`CheatPlayerAdapter`) operating directly on core RPG Maker MV/MZ engine objects: gold, actor HP/MP/level, party heal, item/weapon/armor grants, teleport, god mode, walk-through-walls, a game speed multiplier, save/load to a slot, and opening the in-game menu. Reachable as a new `Cheats` quick action / `ActionType`.
+- In-app plugins viewer (`PluginsScreen`) that reads the running game's live `$plugins` array and allows toggling a plugin's status for the current session. Reachable as a new `Plugins` quick action / `ActionType`.
+- System back button/gesture on the Home screen is now forwarded to the game as an `Escape` (Cancel/Menu) key press instead of immediately exiting; pressing back again shortly after shows the exit confirmation (`BackPopup`).
+- New language strings `actions_cheats`/`actions_plugins` across all bundled languages (`en`, `es`, `ja`, `pt-rBR`, `ru`, `zh`).
+- New `ludens.settings.preset.actionItems` tokens: `cheats`, `plugins`.
+- New language support: Chinese (`zh`), Japanese (`ja`), Portuguese - Brazil (`pt-rBR`), and Russian (`ru`) for UI. ([@rainbowtrash2333](https://github.com/yoimerdr/ludens/pull/1))
+- Automatic synchronization of web assets from the `project/www/` root directory to Compose resources.
+- Font and language strings sync plugins for resource management within the `build-logic` to strip out unused languages and fonts.
+- Language and font configuration support for resource generation, including base language metadata support.
+- Project extension utilities for asset management and resource name parsing.
+- Multilingual support with optimized i18n loading, and language alias parsing from presets configuration.
+- Conditional rendering of `LanguageAction` based on available languages.
+- `CODE_OF_CONDUCT.md` and updated issue templates.
+
+### Changed
+
+- `ActionType.from(value)` now falls back to `Settings` instead of throwing when given an unrecognized value, so persisted data referencing a removed action type can no longer crash settings deserialization.
+- Enhanced `SideTabOptions` layout, improving text overflow handling.
+- Optimized view model injection and enhanced state management using `rememberSaveable`.
+- Removed specific fonts to use variable font types.
+- Reduced manual resource handling by leveraging new helper utilities.
+- Moved configuration files and enhanced internal documentation for clarity.
+- Changed how plugins are applied: now there is only a single `ludens.build` plugin, and the others must be activated/applied using the DSL in gradle.
+- Updated project documentation (`README`, `BUILD`, `CONTRIBUTING`) to detail the new root folder asset synchronization method.
+
+### Fixed
+
+- Removed four orphaned/non-functional prototype files (`androidMain/kotlin/cheat`, `bridge`, `plugin`, `gamepad`) that were never wired into navigation, DI, or the WebView and would not have compiled correctly against the current WebView/DI architecture even if referenced. Their functionality is now properly implemented and wired through `features/cheats` and `features/plugins`.
+- Fixed unexpected error has been fixed in the generation of icon resources during compilation, which was causing the files to be placed inside the “generated” folder.
+- Fixed locale handling by including configuration orientation in `remember`.
+
+## [0.3.0] - 2026-04-25
+
+### Added
+
+- `build-logic` module with custom Gradle plugins for Ludens configuration, generated resources, and generated permissions.
+- Root [`ludens.properties`](ludens.properties) configuration as the main source for app identity, manifest flags, permissions, and settings presets.
+- Generated settings preset source and typed compose resource accessors.
+- Platform-specific WebView helpers and memory-management utilities for Android and iOS.
+- New keyboard control model and related UI state for game input mapping.
+- The range of keys supported by the control buttons has been expanded to include a full set of standard keys, including specific graphic keys
+- Responsive layout primitives and reusable design tokens for spacing, radius, strokes, and breakpoints.
+- Searchable dropdown component for control selection flows.
+- Boot resource handling, including `www/index.html` and memory-cleaner boot script support.
+
+### Changed
+
+- Android build now reads Ludens configuration from [`ludens.properties`](ludens.properties) and applies app identity and manifest placeholders from that model.
+- Settings preset generation now resolves default values from the new configuration pipeline instead of hardcoded app-side defaults.
+- Home and settings screens were reworked for updated control behavior, action ordering, and more responsive layouts.
+- Theme, typography, spacing, card, floating, and dock components were refreshed to match a new visual system.
+- WebView startup and lifecycle handling were updated to improve stability and memory behavior.
+- The plugin and settings experience was updated around `YDP_Ludens.js` and related control/key handling.
+
+### Fixed
+
+- Fixed configuration loading behavior that could be affected by cache or stale values.
+- Fixed missing file/path handling for resource bootstrapping.
+- Fixed settings layout padding mismatches.
+- Fixed behavior around unexpected active actions.
+- Fixed black screen for RPG Maker MZ games.
+
+## [0.2.0] - 2026-02-05
+
+### Added
+
+- onRestart callback implementation for navigation and state reset
+
+### Changed
+
+- Refactored settings events to use `UpdateSettings` sealed interface pattern
+- Improved settings event and request handling
+
+### Fixed
+
+- Fixed on-screen controls not showing when YDP_Ludens plugin is disabled or not present
+- Fixed unnecessary WebView restart when updating settings without navigating away
+
+## [0.1.0] - 2026-01-27
+
+Initial project release.
+
+### Added
+
+#### Android Build Support
+
+- Android 21+ support (Designed for modern devices)
+- Optimized WebView for RPG Maker MV/MZ
+
+#### Native Overlay Controls
+
+- Virtual Joystick (Configurable opacity & position)
+- Action Buttons (A, B, X, Y)
+
+#### Comprehensive Settings System
+
+- System Theme & Language
+- Audio Mute & FPS Counter
+- WebGL Toggle
+
+#### Easy Android Build Configuration
+
+- Customizable applicationId, Version, and Name via gradle.properties
+- Simplified Asset Injection (composeResources/files/www)
+
+> [!NOTE]
+> iOS support is planned for future releases. The current codebase contains shared logic, but build configuration is currently Android-focused.

@@ -1,0 +1,126 @@
+package com.yoimerdr.compose.ludens.core.data.mapper.settings
+
+import com.yoimerdr.compose.ludens.core.data.source.local.settings.ProtoActionItem
+import com.yoimerdr.compose.ludens.core.data.source.local.settings.ProtoActionSettings
+import com.yoimerdr.compose.ludens.core.data.source.local.settings.ProtoControlItem
+import com.yoimerdr.compose.ludens.core.data.source.local.settings.ProtoControlSettings
+import com.yoimerdr.compose.ludens.core.data.source.local.settings.ProtoPositionableItem
+import com.yoimerdr.compose.ludens.core.data.source.local.settings.ProtoSettings
+import com.yoimerdr.compose.ludens.core.data.source.local.settings.ProtoSystemSettings
+import com.yoimerdr.compose.ludens.core.data.source.local.settings.ProtoToolSettings
+import com.yoimerdr.compose.ludens.core.domain.factory.SettingsFactory
+import com.yoimerdr.compose.ludens.core.domain.model.settings.ActionItem
+import com.yoimerdr.compose.ludens.core.domain.model.settings.ActionSettings
+import com.yoimerdr.compose.ludens.core.domain.model.settings.ActionType
+import com.yoimerdr.compose.ludens.core.domain.model.settings.ControlItem
+import com.yoimerdr.compose.ludens.core.domain.model.settings.ControlSettings
+import com.yoimerdr.compose.ludens.core.domain.model.settings.ItemType
+import com.yoimerdr.compose.ludens.core.domain.model.settings.PositionableItem
+import com.yoimerdr.compose.ludens.core.domain.model.settings.PositionableType
+import com.yoimerdr.compose.ludens.core.domain.model.settings.Settings
+import com.yoimerdr.compose.ludens.core.domain.model.settings.SystemLanguage
+import com.yoimerdr.compose.ludens.core.domain.model.settings.SystemSettings
+import com.yoimerdr.compose.ludens.core.domain.model.settings.SystemTheme
+import com.yoimerdr.compose.ludens.core.domain.model.settings.ToolSettings
+import com.yoimerdr.compose.ludens.core.domain.value.Alpha
+
+fun Settings.toProto(): ProtoSettings = ProtoSettings(
+    tool = tool.toProto(),
+    control = control.toProto(),
+    system = system.toProto(),
+    action = action.toProto()
+)
+
+fun ToolSettings.toProto(): ProtoToolSettings = ProtoToolSettings(
+    isMuted = isMuted, showFPS = showFPS, useWebGL = useWebGL
+)
+
+fun ControlSettings.toProto(): ProtoControlSettings = ProtoControlSettings(
+    enabled = enabled,
+    alpha = alpha.value,
+    items = items.map { it.toProto() },
+    positions = positions.map { it.toProto() }
+)
+
+fun SystemSettings.toProto(): ProtoSystemSettings = ProtoSystemSettings(
+    theme = theme.value,
+    language = language.value,
+    language_tag = language.tag
+)
+
+fun ActionSettings.toProto(): ProtoActionSettings = ProtoActionSettings(
+    items = items.map { it.toProto() },
+    enabled = enabled
+)
+
+fun ActionItem.toProto(): ProtoActionItem = ProtoActionItem(
+    type = type.value,
+    enabled = enabled,
+    order = order
+)
+
+fun ControlItem.toProto(): ProtoControlItem = ProtoControlItem(
+    type = type.value, enabled = enabled, alpha = alpha.value, key = code ?: 0
+)
+
+fun PositionableItem.toProto(): ProtoPositionableItem = ProtoPositionableItem(
+    type = type.value, x = x, y = y
+)
+
+fun ProtoSettings.toDomain(): Settings = Settings(
+    tool = tool?.toDomain() ?: SettingsFactory.toolSettings(),
+    control = control?.toDomain() ?: SettingsFactory.controlSettings(),
+    system = system?.toDomain() ?: SettingsFactory.systemSettings(),
+    action = action?.toDomain() ?: SettingsFactory.actionSettings()
+)
+
+fun ProtoToolSettings.toDomain(): ToolSettings = ToolSettings(
+    isMuted = isMuted, showFPS = showFPS, useWebGL = useWebGL
+)
+
+fun ProtoSystemSettings.toDomain(): SystemSettings = SystemSettings(
+    theme = SystemTheme.from(theme),
+    language = if (language_tag.isNotEmpty()) {
+        SystemLanguage.from(language_tag) ?: SystemLanguage.System
+    } else {
+        legacySystemLanguageFrom(language)
+    }
+)
+
+private fun legacySystemLanguageFrom(value: Int): SystemLanguage {
+    return when (value) {
+        0 -> SystemLanguage.System
+        1 -> SystemLanguage.from("es") ?: SystemLanguage.System
+        2 -> SystemLanguage.from("zh") ?: SystemLanguage.System
+        else -> SystemLanguage.from(value)
+    }
+}
+
+fun ProtoActionSettings.toDomain(): ActionSettings = ActionSettings(
+    items = items.map { it.toDomain() },
+    enabled = enabled
+)
+
+fun ProtoActionItem.toDomain(): ActionItem = ActionItem(
+    type = ActionType.from(type),
+    enabled = enabled,
+    order = order
+)
+
+fun ProtoControlSettings.toDomain(): ControlSettings = ControlSettings(
+    enabled = enabled,
+    alpha = Alpha.coerce(alpha),
+    items = items.map { it.toDomain() },
+    positions = positions.map { it.toDomain() }
+)
+
+fun ProtoControlItem.toDomain(): ControlItem = ControlItem(
+    type = ItemType.from(type),
+    enabled = enabled,
+    alpha = Alpha.coerce(alpha),
+    code = key
+)
+
+fun ProtoPositionableItem.toDomain(): PositionableItem = PositionableItem(
+    type = PositionableType.from(type), x = x, y = y
+)
