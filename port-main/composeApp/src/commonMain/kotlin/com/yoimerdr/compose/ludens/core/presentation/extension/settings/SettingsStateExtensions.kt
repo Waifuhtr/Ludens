@@ -231,8 +231,14 @@ val ActionType.label: String
         ActionType.ToggleFPS -> stringResource(Res.string.actions_toggle_fps)
         ActionType.ToggleMute -> stringResource(Res.string.actions_toggle_mute)
         ActionType.ToggleWebGL -> stringResource(Res.string.actions_toggle_webgl)
-        ActionType.Cheats -> stringResource(Res.string.actions_cheats)
-        ActionType.Plugins -> stringResource(Res.string.actions_plugins)
+        // NOT stringResource(Res.string.actions_cheats/actions_plugins) on purpose: those keys
+        // live in project/assets/languages/*/strings.xml and only reach the generated Res
+        // object through the ludensLanguageStringsSync Gradle task. If that sync ever runs
+        // against an older copy of the asset store (stale cache, partial checkout, etc.) the
+        // reference fails to resolve and breaks compilation for the *entire* app. A literal
+        // string here can never do that, at the minor cost of not being localized.
+        ActionType.Cheats -> "Hile Menüsü"
+        ActionType.Plugins -> "Eklentiler"
         else -> stringResource(Res.string.unknown)
     }
 
