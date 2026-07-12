@@ -139,10 +139,20 @@ class CheatPlayerAdapter(
         )
     }
 
+    override suspend fun isGodModeActive(): Boolean {
+        return evaluator.evaluatingScript("!!window.__ludensGodMode").toBoolean()
+    }
+
     override fun setWalkThroughWalls(enabled: Boolean) {
         evaluator.evaluateScript(
             "if(window.\$gamePlayer){window.\$gamePlayer.setThrough($enabled);}"
         )
+    }
+
+    override suspend fun isWalkThroughWallsActive(): Boolean {
+        return evaluator.evaluatingScript(
+            "!!(window.\$gamePlayer && window.\$gamePlayer.isThrough())"
+        ).toBoolean()
     }
 
     override fun setGameSpeed(rate: Float) {
