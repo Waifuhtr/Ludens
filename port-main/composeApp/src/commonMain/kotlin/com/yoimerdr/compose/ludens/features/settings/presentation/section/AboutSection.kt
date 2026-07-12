@@ -133,6 +133,16 @@ private fun AboutFooter(
             }
         }
 
+        // Not a Res.string entry on purpose: see the note on ActionType.label in
+        // SettingsStateExtensions.kt for why plain literals are used for text added outside
+        // the upstream Ludens string set.
+        Text(
+            text = "Oynadığınız için teşekkürler, riaslink.fun sunar.",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.tertiary,
+        )
+
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(spacing.extraSmall)
