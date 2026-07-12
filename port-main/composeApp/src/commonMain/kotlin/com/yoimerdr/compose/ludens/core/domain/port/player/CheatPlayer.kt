@@ -103,11 +103,27 @@ interface CheatPlayer {
     fun setGodMode(enabled: Boolean)
 
     /**
+     * Checks whether god mode is currently active.
+     *
+     * Useful for restoring a toggle's visual state after navigating back to the cheat screen,
+     * since god mode itself keeps running in the background independently of which screen is
+     * currently shown.
+     */
+    suspend fun isGodModeActive(): Boolean
+
+    /**
      * Enables or disables walking through walls/obstacles for the player character.
      *
      * @param enabled Whether collision should be bypassed.
      */
     fun setWalkThroughWalls(enabled: Boolean)
+
+    /**
+     * Checks whether walk-through-walls is currently active.
+     *
+     * Useful for restoring a toggle's visual state after navigating back to the cheat screen.
+     */
+    suspend fun isWalkThroughWallsActive(): Boolean
 
     /**
      * Sets a game logic speed multiplier (fast-forward).
