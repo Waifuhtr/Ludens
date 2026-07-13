@@ -134,6 +134,53 @@ interface CheatPlayer {
     fun setGameSpeed(rate: Float)
 
     /**
+     * Sets a damage multiplier applied to damage the party deals to enemies (healing and
+     * enemy-to-party damage are unaffected).
+     *
+     * @param multiplier The damage multiplier. Implementations should clamp this to a safe
+     * range (e.g. 1x-99x) to avoid integer overflow/absurd values.
+     */
+    fun setDamageMultiplier(multiplier: Float)
+
+    /**
+     * Checks the currently active damage multiplier.
+     *
+     * Useful for restoring the field's value after navigating back to the cheat screen.
+     */
+    suspend fun getDamageMultiplier(): Float
+
+    /**
+     * Enables or disables instant kill: while active, any damage the party deals to an enemy
+     * reduces it to 0 HP.
+     *
+     * @param enabled Whether instant kill should be active.
+     */
+    fun setInstantKill(enabled: Boolean)
+
+    /**
+     * Checks whether instant kill is currently active.
+     *
+     * Useful for restoring a toggle's visual state after navigating back to the cheat screen.
+     */
+    suspend fun isInstantKillActive(): Boolean
+
+    /**
+     * Enables or disables random encounters, using the engine's own encounter system (the same
+     * mechanism the "Change Encounter" event command uses), so this behaves exactly like the
+     * game's own designed toggle rather than a patched approximation.
+     *
+     * @param enabled Whether random encounters should be enabled.
+     */
+    fun setEncountersEnabled(enabled: Boolean)
+
+    /**
+     * Checks whether random encounters are currently enabled.
+     *
+     * Useful for restoring a toggle's visual state after navigating back to the cheat screen.
+     */
+    suspend fun isEncountersEnabled(): Boolean
+
+    /**
      * Saves the current session to a save slot.
      *
      * @param slot The save file slot number, as used by the engine's own save/load menu.
