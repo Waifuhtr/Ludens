@@ -33,6 +33,7 @@ import com.yoimerdr.compose.ludens.features.settings.presentation.components.Opt
 import com.yoimerdr.compose.ludens.features.settings.presentation.components.OptionName
 import com.yoimerdr.compose.ludens.features.settings.presentation.components.OptionsContainer
 import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.OnChangeLanguage
+import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.OnChangeSplash
 import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.OnChangeTheme
 import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.RestoreDefaultSettings
 import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.SettingsEvent
@@ -44,6 +45,7 @@ import com.yoimerdr.compose.ludens.ui.components.provider.LocalInteractionManage
 import com.yoimerdr.compose.ludens.ui.components.provider.LocalSpacing
 import com.yoimerdr.compose.ludens.ui.icons.LudensIcons
 import com.yoimerdr.compose.ludens.ui.icons.outlined.PhoneDesktop
+import com.yoimerdr.compose.ludens.ui.icons.outlined.ScreenShoot
 import com.yoimerdr.compose.ludens.ui.icons.outlined.WeatherMoon
 import com.yoimerdr.compose.ludens.ui.icons.outlined.WeatherSunny
 import ludens.composeapp.generated.resources.Res
@@ -166,6 +168,83 @@ private fun AppearanceAction(
 }
 
 /**
+ * A toggle button for selecting a splash screen option.
+ *
+ * @param label The label shown on the button ("Varsayılan", "1", "2", ...).
+ * @param selected Whether this option is currently selected.
+ * @param onClick Callback invoked when the option is clicked.
+ * @param modifier The modifier to be applied to the button.
+ */
+@Composable
+private fun SplashOption(
+    modifier: Modifier = Modifier,
+    label: String,
+    selected: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val spacing = LocalSpacing.current
+    FilledTonalToggleButton(
+        onClick = onClick,
+        modifier = modifier,
+        selected = selected,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(spacing.small)
+        ) {
+            Icon(
+                imageVector = LudensIcons.Default.ScreenShoot,
+                contentDescription = null,
+            )
+            Text(label)
+        }
+    }
+}
+
+/**
+ * A card displaying splash screen selection options: the default Ludens-branded pulse
+ * animation, plus up to 5 custom bundled alternatives (`acilis1.gif`-`acilis5.gif`).
+ *
+ * @param splashId The currently selected splash id (`0` = default, `1`-`5` = custom).
+ * @param onEvent Callback invoked when a splash option is selected.
+ */
+@Composable
+private fun SplashAction(
+    splashId: Int,
+    onEvent: (OnChangeSplash) -> Unit,
+) {
+    val spacing = LocalSpacing.current
+    OptionCard(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        OptionName(text = "Açılış Ekranı")
+
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+            verticalArrangement = Arrangement.spacedBy(spacing.small),
+            maxItemsInEachRow = 3,
+            modifier = Modifier.fillMaxWidth(),
+            itemVerticalAlignment = Alignment.CenterVertically
+        ) {
+            SplashOption(
+                modifier = Modifier.padding(spacing.extraSmall).sizeIn(minWidth = 120.dp).weight(1f),
+                label = "Varsayılan",
+                selected = splashId == 0,
+                onClick = { onEvent(OnChangeSplash(0)) },
+            )
+            (1..5).forEach { id ->
+                SplashOption(
+                    modifier = Modifier.padding(spacing.extraSmall).sizeIn(minWidth = 120.dp).weight(1f),
+                    label = "Açılış $id",
+                    selected = splashId == id,
+                    onClick = { onEvent(OnChangeSplash(id)) },
+                )
+            }
+        }
+    }
+}
+
+/**
  * A card displaying language selection dropdown.
  *
  * @param language The currently selected language.
@@ -238,6 +317,13 @@ fun SystemSettingsSection(
         item {
             AppearanceAction(
                 theme = settings.theme,
+                onEvent = onEvent,
+            )
+        }
+
+        item {
+            SplashAction(
+                splashId = settings.splashId,
                 onEvent = onEvent,
             )
         }
