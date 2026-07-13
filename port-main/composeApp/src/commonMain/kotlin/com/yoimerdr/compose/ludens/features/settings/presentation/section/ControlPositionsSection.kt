@@ -252,6 +252,7 @@ private fun BoxScope.MovableKeyControls(
         Alignment.BottomCenter,
         Alignment.TopCenter,
         Alignment.CenterStart,
+        Alignment.Center,
     )
 
     val dragger = rememberClampedDraggableState(
