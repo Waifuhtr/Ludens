@@ -29,6 +29,14 @@ data class OnChangeLanguage(val language: SystemLanguage) : SystemSettingsEvent.
 data class OnChangeTheme(val theme: SystemTheme) : SystemSettingsEvent.UpdateSettings
 
 /**
+ * Changes the splash screen animation.
+ *
+ * @param splashId The selected splash id. `0` is the default Ludens pulse animation;
+ * `1`-`5` select one of the bundled `acilis1.gif`-`acilis5.gif` alternatives.
+ */
+data class OnChangeSplash(val splashId: Int) : SystemSettingsEvent.UpdateSettings
+
+/**
  * Resets all settings to default values.
  */
 data object RestoreDefaultSettings : SystemSettingsEvent
