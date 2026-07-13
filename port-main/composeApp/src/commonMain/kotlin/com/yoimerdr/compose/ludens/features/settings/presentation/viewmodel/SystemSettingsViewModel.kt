@@ -12,6 +12,7 @@ import com.yoimerdr.compose.ludens.core.presentation.model.settings.SettingsStat
 import com.yoimerdr.compose.ludens.core.presentation.model.settings.SystemSettingsState
 import com.yoimerdr.compose.ludens.features.settings.presentation.state.SettingsCategory
 import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.OnChangeLanguage
+import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.OnChangeSplash
 import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.OnChangeTheme
 import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.RestoreDefaultSettings
 import com.yoimerdr.compose.ludens.features.settings.presentation.state.events.SettingsEvent
@@ -94,6 +95,17 @@ class SystemSettingsViewModel(
     fun onChangeLanguage(event: OnChangeLanguage) {
         updateState {
             copy(language = event.language)
+        }
+    }
+
+    /**
+     * Changes the splash screen animation.
+     *
+     * @param event The event containing the selected splash id.
+     */
+    fun onChangeSplash(event: OnChangeSplash) {
+        updateState {
+            copy(splashId = event.splashId)
         }
     }
 
@@ -184,6 +196,7 @@ class SystemSettingsViewModel(
         when (event) {
             is OnChangeTheme -> onChangeTheme(event)
             is OnChangeLanguage -> onChangeLanguage(event)
+            is OnChangeSplash -> onChangeSplash(event)
             RestoreDefaultSettings -> restoreDefaults()
             else -> {}
         }
