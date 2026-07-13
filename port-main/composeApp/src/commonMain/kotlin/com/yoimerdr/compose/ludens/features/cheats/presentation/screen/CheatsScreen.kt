@@ -45,6 +45,7 @@ import com.yoimerdr.compose.ludens.ui.icons.outlined.Code
 import com.yoimerdr.compose.ludens.ui.icons.outlined.Games
 import com.yoimerdr.compose.ludens.ui.icons.outlined.Person
 import com.yoimerdr.compose.ludens.ui.icons.outlined.Save
+import com.yoimerdr.compose.ludens.ui.icons.outlined.System
 import com.yoimerdr.compose.ludens.ui.icons.outlined.TopSpeed
 import com.yoimerdr.compose.ludens.ui.theme.ConsoleCard
 import com.yoimerdr.compose.ludens.ui.theme.ConsoleColors
@@ -73,6 +74,7 @@ private data class CheatFormState(
     val teleportY: String = "0",
     val speed: String = "2",
     val saveSlot: String = "1",
+    val damageMultiplier: String = "1",
 )
 
 private enum class ItemKind(val label: String) {
@@ -111,6 +113,8 @@ fun CheatsScreen(
     var form by remember { mutableStateOf(CheatFormState()) }
     var godMode by remember { mutableStateOf(false) }
     var walkThroughWalls by remember { mutableStateOf(false) }
+    var instantKill by remember { mutableStateOf(false) }
+    var encountersEnabled by remember { mutableStateOf(true) }
     var isGameActive by remember { mutableStateOf<Boolean?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -118,6 +122,11 @@ fun CheatsScreen(
         isGameActive = cheatPlayer.isGameActive()
         godMode = cheatPlayer.isGodModeActive()
         walkThroughWalls = cheatPlayer.isWalkThroughWallsActive()
+        instantKill = cheatPlayer.isInstantKillActive()
+        encountersEnabled = cheatPlayer.isEncountersEnabled()
+        form = form.copy(damageMultiplier = cheatPlayer.getDamageMultiplier().let {
+            if (it == it.toInt().toFloat()) it.toInt().toString() else it.toString()
+        })
     }
 
     LaunchedEffect(Unit) {
@@ -133,7 +142,7 @@ fun CheatsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
-                .padding(spacing.medium),
+                .padding(horizontal = spacing.small, vertical = spacing.medium),
             verticalArrangement = Arrangement.spacedBy(spacing.large),
         ) {
             ConsoleHeader(
@@ -182,13 +191,18 @@ fun CheatsScreen(
                             onValueChange = { form = form.copy(gold = it) },
                             accent = ConsoleColors.Amber,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+                        ) {
                             ConsoleFilledButton(
+                                modifier = Modifier.weight(1f),
                                 text = "Ayarla",
                                 accent = ConsoleColors.Amber,
                                 onClick = { cheatPlayer.setGold(form.gold.toSafeInt()) },
                             )
                             ConsoleOutlinedButton(
+                                modifier = Modifier.weight(1f),
                                 text = "Ekle / Çıkar",
                                 accent = ConsoleColors.Amber,
                                 onClick = { cheatPlayer.addGold(form.gold.toSafeInt()) },
@@ -226,8 +240,12 @@ fun CheatsScreen(
                                 accent = ConsoleColors.Green,
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+                        ) {
                             ConsoleFilledButton(
+                                modifier = Modifier.weight(1f),
                                 text = "HP/MP Uygula",
                                 accent = ConsoleColors.Green,
                                 onClick = {
@@ -237,6 +255,7 @@ fun CheatsScreen(
                                 },
                             )
                             ConsoleOutlinedButton(
+                                modifier = Modifier.weight(1f),
                                 text = "İyileştir",
                                 accent = ConsoleColors.Green,
                                 icon = LudensIcons.Default.ArrowReset,
@@ -272,17 +291,22 @@ fun CheatsScreen(
                         icon = LudensIcons.Default.ArrowDownload,
                         accent = ConsoleColors.Violet,
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+                        ) {
                             ItemKind.entries.forEach { kind ->
                                 val selected = form.itemKind == kind
                                 if (selected) {
                                     ConsoleFilledButton(
+                                        modifier = Modifier.weight(1f),
                                         text = kind.label,
                                         accent = ConsoleColors.Violet,
                                         onClick = { form = form.copy(itemKind = kind) },
                                     )
                                 } else {
                                     ConsoleOutlinedButton(
+                                        modifier = Modifier.weight(1f),
                                         text = kind.label,
                                         accent = ConsoleColors.Violet,
                                         onClick = { form = form.copy(itemKind = kind) },
@@ -306,8 +330,12 @@ fun CheatsScreen(
                                 accent = ConsoleColors.Violet,
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+                        ) {
                             ConsoleFilledButton(
+                                modifier = Modifier.weight(1f),
                                 text = "Envantere Ekle",
                                 accent = ConsoleColors.Violet,
                                 onClick = {
@@ -320,7 +348,10 @@ fun CheatsScreen(
                                     }
                                 },
                             )
-                            TextButton(onClick = { cheatPlayer.addAllItems() }) {
+                            TextButton(
+                                modifier = Modifier.weight(1f),
+                                onClick = { cheatPlayer.addAllItems() },
+                            ) {
                                 Text("Tüm Eşyaları Ekle", color = ConsoleColors.Violet)
                             }
                         }
@@ -418,6 +449,48 @@ fun CheatsScreen(
                 }
 
                 item {
+                    ConsoleCard(title = "Savaş", tag = "// BATTLE", icon = LudensIcons.Default.System, accent = ConsoleColors.Pink) {
+                        ConsoleSwitchRow(
+                            text = "Tek Vuruşta Öldür",
+                            checked = instantKill,
+                            accent = ConsoleColors.Pink,
+                            onCheckedChange = {
+                                instantKill = it
+                                cheatPlayer.setInstantKill(it)
+                            },
+                        )
+                        ConsoleSwitchRow(
+                            text = "Rastgele Savaşlar",
+                            checked = encountersEnabled,
+                            accent = ConsoleColors.Pink,
+                            onCheckedChange = {
+                                encountersEnabled = it
+                                cheatPlayer.setEncountersEnabled(it)
+                            },
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+                        ) {
+                            ConsoleTextField(
+                                modifier = Modifier.weight(1f),
+                                label = "Hasar Çarpanı (1x-99x)",
+                                value = form.damageMultiplier,
+                                onValueChange = { form = form.copy(damageMultiplier = it) },
+                                accent = ConsoleColors.Pink,
+                            )
+                            ConsoleFilledButton(
+                                text = "Uygula",
+                                accent = ConsoleColors.Pink,
+                                onClick = {
+                                    cheatPlayer.setDamageMultiplier(form.damageMultiplier.toSafeFloat(1f))
+                                },
+                            )
+                        }
+                    }
+                }
+
+                item {
                     ConsoleCard(
                         title = "Kayıt / Menü",
                         tag = "// SAVE",
@@ -430,18 +503,26 @@ fun CheatsScreen(
                             onValueChange = { form = form.copy(saveSlot = it) },
                             accent = ConsoleColors.Cyan,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+                        ) {
                             ConsoleFilledButton(
+                                modifier = Modifier.weight(1f),
                                 text = "Kaydet",
                                 accent = ConsoleColors.Cyan,
                                 onClick = { cheatPlayer.saveToSlot(form.saveSlot.toSafeInt(1)) },
                             )
                             ConsoleOutlinedButton(
+                                modifier = Modifier.weight(1f),
                                 text = "Yükle",
                                 accent = ConsoleColors.Cyan,
                                 onClick = { cheatPlayer.loadFromSlot(form.saveSlot.toSafeInt(1)) },
                             )
-                            TextButton(onClick = { cheatPlayer.openMenu() }) {
+                            TextButton(
+                                modifier = Modifier.weight(1f),
+                                onClick = { cheatPlayer.openMenu() },
+                            ) {
                                 Icon(
                                     LudensIcons.Default.Games,
                                     contentDescription = null,
