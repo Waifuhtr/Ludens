@@ -1,20 +1,21 @@
 package com.yoimerdr.compose.ludens.features.settings.presentation.section
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.yoimerdr.compose.ludens.features.settings.presentation.components.OptionCard
 import com.yoimerdr.compose.ludens.features.settings.presentation.components.OptionsContainer
 import com.yoimerdr.compose.ludens.konfig.generated.BuildKonfig
@@ -22,14 +23,14 @@ import com.yoimerdr.compose.ludens.ui.components.provider.LocalSpacing
 import com.yoimerdr.compose.ludens.ui.components.text.LinkText
 import com.yoimerdr.compose.ludens.ui.components.text.LinkTextPart
 import com.yoimerdr.compose.ludens.ui.components.text.SmallText
-import com.yoimerdr.compose.ludens.ui.icons.LudensIcons
-import com.yoimerdr.compose.ludens.ui.icons.brand.Ludens
 import ludens.composeapp.generated.resources.Res
+import ludens.composeapp.generated.resources.riaslink_logo
 import ludens.composeapp.generated.resources.stc_about_description
 import ludens.composeapp.generated.resources.stc_about_issues
 import ludens.composeapp.generated.resources.stc_about_version
 import ludens.composeapp.generated.resources.stc_about_website
 import ludens.composeapp.generated.resources.stc_about_copyright
+import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 
 /**
@@ -66,10 +67,10 @@ private fun AboutHeader(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(spacing.small)
     ) {
-        Icon(
-            imageVector = LudensIcons.Brand.Ludens,
-            contentDescription = "Ludens Logo",
-            tint = Color.Unspecified
+        Image(
+            painter = painterResource(Res.drawable.riaslink_logo),
+            contentDescription = "Riaslink Logo",
+            modifier = Modifier.size(72.dp),
         )
 
         Column(
