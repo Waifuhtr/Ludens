@@ -1,12 +1,14 @@
 package com.yoimerdr.compose.ludens.features.home.presentation.sections
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -26,7 +28,6 @@ import com.yoimerdr.compose.ludens.core.presentation.model.settings.ControlItemS
 import com.yoimerdr.compose.ludens.core.presentation.model.settings.ControlSettingsState
 import com.yoimerdr.compose.ludens.core.presentation.model.settings.PositionableItemState
 import com.yoimerdr.compose.ludens.core.presentation.model.settings.ToolSettingsState
-import com.yoimerdr.compose.ludens.ui.components.buttons.OutlinedIconButton
 import com.yoimerdr.compose.ludens.ui.components.layout.Card
 import com.yoimerdr.compose.ludens.ui.components.layout.FloatingDock
 import com.yoimerdr.compose.ludens.ui.components.layout.FloatingDockHandleButton
@@ -43,6 +44,9 @@ import com.yoimerdr.compose.ludens.ui.icons.outlined.Wrench
 import com.yoimerdr.compose.ludens.ui.state.layout.DockMode
 import com.yoimerdr.compose.ludens.ui.state.layout.rememberDockState
 import kotlin.math.roundToInt
+import ludens.composeapp.generated.resources.Res
+import ludens.composeapp.generated.resources.riaslink_menu_button
+import org.jetbrains.compose.resources.painterResource
 
 /**
  * Displays the configuration or quick actions settings button according to the [actions].
@@ -89,24 +93,17 @@ fun SettingsActions(
         }
 
     if (actions.isEmpty()) {
-        OutlinedIconButton(
-            border = null,
-            colors = IconButtonDefaults.outlinedIconButtonColors(
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                containerColor = MaterialTheme.colorScheme.primary,
-                disabledContentColor = MaterialTheme.colorScheme.onPrimary,
-                disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-            ),
-            shape = MaterialTheme.shapes.large,
-            onClick = onConfiguration,
+        // A plain clickable image, not a Material IconButton: the button IS the artwork, with
+        // no forced circular/colored chrome around it, so a non-circular custom design isn't
+        // cropped or fought by a background shape.
+        Image(
+            painter = painterResource(Res.drawable.riaslink_menu_button),
+            contentDescription = "Settings",
             modifier = offset
                 .alpha(control.alpha)
-        ) {
-            Icon(
-                LudensIcons.Default.Settings,
-                contentDescription = "Settings",
-            )
-        }
+                .size(56.dp)
+                .clickable(onClick = onConfiguration),
+        )
     } else {
         FloatingDock(
             modifier = offset,
