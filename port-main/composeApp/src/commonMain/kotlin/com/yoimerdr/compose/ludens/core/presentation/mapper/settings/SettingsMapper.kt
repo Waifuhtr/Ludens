@@ -40,7 +40,8 @@ fun ToolSettings.toUIModel(): ToolSettingsState = ToolSettingsState(
 
 fun SystemSettings.toUIModel(): SystemSettingsState = SystemSettingsState(
     theme = theme,
-    language = language
+    language = language,
+    splashId = splashId,
 )
 
 fun ControlSettings.toUIModel(): ControlSettingsState = ControlSettingsState(
@@ -115,7 +116,8 @@ fun ToolSettingsState.toDomain(): ToolSettings = ToolSettings(
 
 fun SystemSettingsState.toDomain(): SystemSettings = SystemSettings(
     theme = theme,
-    language = language
+    language = language,
+    splashId = splashId,
 )
 
 fun ControlSettingsState.toDomain(): ControlSettings = ControlSettings(
