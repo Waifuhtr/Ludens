@@ -224,7 +224,7 @@ fun OptionCard(
 @Composable
 fun OptionsContainer(
     modifier: Modifier = Modifier,
-    verticalArrangement: Arrangement.Vertical = Arrangement.spacedBy(LocalSpacing.current.medium),
+    verticalArrangement: Arrangement.Vertical = Arrangement.spacedBy(LocalSpacing.current.large),
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
     state: LazyListState = rememberLazyListState(),
     content: LazyListScope.() -> Unit,
