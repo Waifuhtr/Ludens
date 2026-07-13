@@ -177,6 +177,74 @@ class CheatPlayerAdapter(
         )
     }
 
+    override fun setDamageMultiplier(multiplier: Float) {
+        val safeMultiplier = multiplier.coerceIn(1f, 99f)
+        evaluator.evaluateScript(
+            """
+            (function(){
+                if(window.Game_Action&&!window.__ludensDamagePatched){
+                    window.__ludensDamagePatched=true;
+                    window.__ludensDamageMultiplier=1;
+                    var _makeDamageValue=window.Game_Action.prototype.makeDamageValue;
+                    window.Game_Action.prototype.makeDamageValue=function(target,critical){
+                        var value=_makeDamageValue.call(this,target,critical);
+                        if(this.subject&&this.subject()&&this.subject().isActor&&this.subject().isActor()&&this.isDamage&&this.isDamage()&&value>0){
+                            value=Math.round(value*(window.__ludensDamageMultiplier||1));
+                        }
+                        return value;
+                    };
+                }
+                window.__ludensDamageMultiplier=$safeMultiplier;
+            })();
+            """.trimIndent()
+        )
+    }
+
+    override suspend fun getDamageMultiplier(): Float {
+        return evaluator.evaluatingScript("window.__ludensDamageMultiplier||1").toFloatOrNull() ?: 1f
+    }
+
+    override fun setInstantKill(enabled: Boolean) {
+        evaluator.evaluateScript(
+            """
+            (function(){
+                if(window.Game_Action&&!window.__ludensInstaKillPatched){
+                    window.__ludensInstaKillPatched=true;
+                    window.__ludensInstaKill=false;
+                    var _apply=window.Game_Action.prototype.apply;
+                    window.Game_Action.prototype.apply=function(target){
+                        _apply.call(this,target);
+                        if(window.__ludensInstaKill&&target&&this.subject&&this.subject()&&this.subject().isActor&&this.subject().isActor()&&this.isDamage&&this.isDamage()&&!target.isDead()){
+                            target.setHp(0);
+                        }
+                    };
+                }
+                window.__ludensInstaKill=$enabled;
+            })();
+            """.trimIndent()
+        )
+    }
+
+    override suspend fun isInstantKillActive(): Boolean {
+        return evaluator.evaluatingScript("!!window.__ludensInstaKill").toBoolean()
+    }
+
+    override fun setEncountersEnabled(enabled: Boolean) {
+        evaluator.evaluateScript(
+            if (enabled) {
+                "if(window.\$gameSystem){window.\$gameSystem.enableEncounter();}"
+            } else {
+                "if(window.\$gameSystem){window.\$gameSystem.disableEncounter();}"
+            }
+        )
+    }
+
+    override suspend fun isEncountersEnabled(): Boolean {
+        return evaluator.evaluatingScript(
+            "!window.\$gameSystem||window.\$gameSystem.isEncounterEnabled()"
+        ).toBoolean()
+    }
+
     override fun saveToSlot(slot: Int) {
         val id = slot.coerceAtLeast(1)
         evaluator.evaluateScript(
