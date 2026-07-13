@@ -22,23 +22,29 @@ enum class ItemType(val value: Int) {
     KeyY(4),
 
     /** The fast actions button */
-    Actions(5);
+    Actions(5),
+
+    /** A dedicated Escape/Cancel button, separate from the four remappable action buttons. */
+    KeyEsc(6);
 
     companion object {
         /**
          * Retrieves an ItemType from its integer value.
          *
+         * Falls back to [Joystick] instead of throwing when [value] does not match any current
+         * entry, so that persisted data referencing a type removed in a future version never
+         * crashes deserialization.
+         *
          * @param value The integer value to convert.
-         * @return The corresponding ItemType.
-         * @throws NoSuchElementException if no matching type is found.
+         * @return The corresponding ItemType, or [Joystick] if none match.
          */
-        fun from(value: Int): ItemType = entries.first { value == it.value }
+        fun from(value: Int): ItemType = entries.firstOrNull { value == it.value } ?: Joystick
 
         /**
          * Set of all key-type items.
          */
         val keys: Set<ItemType>
-            get() = setOf(KeyA, KeyB, KeyX, KeyY)
+            get() = setOf(KeyA, KeyB, KeyX, KeyY, KeyEsc)
 
         val Settings = Actions
     }
@@ -51,7 +57,7 @@ enum class ItemType(val value: Int) {
     fun toPositionable(): PositionableType {
         return when (this) {
             Joystick -> PositionableType.Joystick
-            KeyA, KeyB, KeyX, KeyY -> PositionableType.Keys
+            KeyA, KeyB, KeyX, KeyY, KeyEsc -> PositionableType.Keys
             Actions -> PositionableType.Actions
         }
     }
@@ -67,6 +73,7 @@ enum class ItemType(val value: Int) {
             KeyB -> "B"
             KeyX -> "X"
             KeyY -> "Y"
+            KeyEsc -> "ESC"
         }
 
     /**
