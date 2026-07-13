@@ -12,10 +12,13 @@ import com.yoimerdr.compose.ludens.core.domain.model.settings.SystemTheme
  *
  * @property theme The application's theme configuration (Light, Dark, or System).
  * @property language The application's language/locale setting.
+ * @property splashId The selected splash screen animation. `0` is the default Ludens pulse
+ * animation; `1`-`5` select one of the bundled `acilis1.gif`-`acilis5.gif` alternatives.
  */
 @Immutable
 data class SystemSettingsState(
     val theme: SystemTheme = SystemTheme.System,
     val language: SystemLanguage = SystemLanguage.System,
+    val splashId: Int = 0,
 )
 
