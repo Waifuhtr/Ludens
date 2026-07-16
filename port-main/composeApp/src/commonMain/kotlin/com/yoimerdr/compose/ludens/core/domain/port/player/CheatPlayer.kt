@@ -208,4 +208,14 @@ interface CheatPlayer {
 
     /** A suspend function that checks whether a game session is currently active. */
     suspend fun isGameActive(): Boolean
+
+    /**
+     * Opens the bundled advanced cheat UI (a touch-adapted integration of the third-party
+     * `paramonos/RPG-Maker-MV-MZ-Cheat-UI-Plugin`), if the current build includes it.
+     *
+     * This is a no-op (silently does nothing) if the game wasn't built with the advanced cheat
+     * UI injected — there is no reliable way to detect its absence from script evaluation alone,
+     * so the caller is responsible for only surfacing this action when it's expected to exist.
+     */
+    fun openAdvancedCheats()
 }
