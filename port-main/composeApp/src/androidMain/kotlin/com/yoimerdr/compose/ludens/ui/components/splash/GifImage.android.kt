@@ -64,7 +64,9 @@ actual fun GifImage(
     Canvas(modifier = modifier) {
         val movieWidth = movie.width().toFloat()
         val movieHeight = movie.height().toFloat()
-        val scale = minOf(size.width / movieWidth, size.height / movieHeight)
+        // maxOf (cover/crop) rather than minOf (fit/letterbox): a splash animation should fill
+        // the screen edge-to-edge like a background, not sit letterboxed as a small centered box.
+        val scale = maxOf(size.width / movieWidth, size.height / movieHeight)
         val drawWidth = movieWidth * scale
         val drawHeight = movieHeight * scale
         val dx = (size.width - drawWidth) / 2f
@@ -74,6 +76,7 @@ actual fun GifImage(
             movie.setTime(elapsedMs)
             val native = canvas.nativeCanvas
             val saveCount = native.save()
+            native.clipRect(0f, 0f, size.width, size.height)
             native.translate(dx, dy)
             native.scale(scale, scale)
             movie.draw(native, 0f, 0f)
