@@ -1,15 +1,18 @@
 package com.yoimerdr.compose.ludens.features.settings.presentation.section
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -23,6 +26,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yoimerdr.compose.ludens.core.domain.model.settings.SystemLanguage
@@ -43,6 +47,7 @@ import com.yoimerdr.compose.ludens.ui.components.buttons.FilledTonalToggleButton
 import com.yoimerdr.compose.ludens.ui.components.provider.CollectInteractionResult
 import com.yoimerdr.compose.ludens.ui.components.provider.LocalInteractionManager
 import com.yoimerdr.compose.ludens.ui.components.provider.LocalSpacing
+import com.yoimerdr.compose.ludens.ui.components.splash.GifImage
 import com.yoimerdr.compose.ludens.ui.icons.LudensIcons
 import com.yoimerdr.compose.ludens.ui.icons.outlined.PhoneDesktop
 import com.yoimerdr.compose.ludens.ui.icons.outlined.ScreenShoot
@@ -51,9 +56,11 @@ import com.yoimerdr.compose.ludens.ui.icons.outlined.WeatherSunny
 import ludens.composeapp.generated.resources.Res
 import ludens.composeapp.generated.resources.change
 import ludens.composeapp.generated.resources.reset
+import ludens.composeapp.generated.resources.riaslink_logo
 import ludens.composeapp.generated.resources.stc_system_appearance
 import ludens.composeapp.generated.resources.stc_system_language
 import ludens.composeapp.generated.resources.stc_system_reset_default
+import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 
 /**
@@ -168,10 +175,11 @@ private fun AppearanceAction(
 }
 
 /**
- * A toggle button for selecting a splash screen option.
+ * A toggle button for selecting a splash screen option, showing a live preview.
  *
- * @param label The label shown on the button ("Varsayılan", "1", "2", ...).
+ * @param label The label shown below the preview ("Varsayılan", "Açılış 1", ...).
  * @param selected Whether this option is currently selected.
+ * @param preview The preview content (a still logo or a playing GIF) shown above the label.
  * @param onClick Callback invoked when the option is clicked.
  * @param modifier The modifier to be applied to the button.
  */
@@ -180,6 +188,7 @@ private fun SplashOption(
     modifier: Modifier = Modifier,
     label: String,
     selected: Boolean = false,
+    preview: @Composable () -> Unit,
     onClick: () -> Unit,
 ) {
     val spacing = LocalSpacing.current
@@ -192,18 +201,72 @@ private fun SplashOption(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(spacing.small)
         ) {
-            Icon(
-                imageVector = LudensIcons.Default.ScreenShoot,
-                contentDescription = null,
-            )
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                preview()
+            }
             Text(label)
         }
     }
 }
 
 /**
- * A card displaying splash screen selection options: the default Ludens-branded pulse
- * animation, plus up to 5 custom bundled alternatives (`acilis1.gif`-`acilis5.gif`).
+ * Preview for the default option: a still frame of the bundled Riaslink logo (the same image
+ * used for the pulse animation itself).
+ */
+@Composable
+private fun DefaultSplashPreview() {
+    Image(
+        painter = painterResource(Res.drawable.riaslink_logo),
+        contentDescription = null,
+        modifier = Modifier.size(44.dp),
+    )
+}
+
+/**
+ * Preview for a custom splash option: reads and plays `files/splash/acilis$id.gif` at a small
+ * size. If that file hasn't been added to the build, silently shows a placeholder icon instead
+ * (never an error) so an unfilled slot just looks empty, not broken.
+ */
+@Composable
+private fun GifSplashPreview(id: Int) {
+    var bytes by remember(id) { mutableStateOf<ByteArray?>(null) }
+    var failed by remember(id) { mutableStateOf(false) }
+
+    LaunchedEffect(id) {
+        val read = runCatching { Res.readBytes("files/splash/acilis$id.gif") }.getOrNull()
+        if (read != null) {
+            bytes = read
+        } else {
+            failed = true
+        }
+    }
+
+    val currentBytes = bytes
+    if (currentBytes != null && !failed) {
+        GifImage(
+            bytes = currentBytes,
+            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)),
+            onUnsupported = { failed = true },
+        )
+    } else if (failed) {
+        Icon(
+            imageVector = LudensIcons.Default.ScreenShoot,
+            contentDescription = null,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+/**
+ * A card displaying splash screen selection options with live previews: the default
+ * Riaslink-branded pulse animation, plus up to 5 custom bundled alternatives
+ * (`acilis1.gif`-`acilis5.gif`). Options for files that haven't been added yet still appear
+ * (with a placeholder preview) so they can be prepared for ahead of time.
  *
  * @param splashId The currently selected splash id (`0` = default, `1`-`5` = custom).
  * @param onEvent Callback invoked when a splash option is selected.
@@ -230,6 +293,7 @@ private fun SplashAction(
                 modifier = Modifier.padding(spacing.extraSmall).sizeIn(minWidth = 120.dp).weight(1f),
                 label = "Varsayılan",
                 selected = splashId == 0,
+                preview = { DefaultSplashPreview() },
                 onClick = { onEvent(OnChangeSplash(0)) },
             )
             (1..5).forEach { id ->
@@ -237,6 +301,7 @@ private fun SplashAction(
                     modifier = Modifier.padding(spacing.extraSmall).sizeIn(minWidth = 120.dp).weight(1f),
                     label = "Açılış $id",
                     selected = splashId == id,
+                    preview = { GifSplashPreview(id) },
                     onClick = { onEvent(OnChangeSplash(id)) },
                 )
             }
