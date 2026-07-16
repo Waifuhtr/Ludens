@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,10 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,16 +35,12 @@ import com.yoimerdr.compose.ludens.app.ui.providers.LocalCheatPlayer
 import com.yoimerdr.compose.ludens.core.domain.port.player.CheatPlayer
 import com.yoimerdr.compose.ludens.ui.components.provider.LocalSpacing
 import com.yoimerdr.compose.ludens.ui.icons.LudensIcons
-import com.yoimerdr.compose.ludens.ui.icons.outlined.ArrowDownload
 import com.yoimerdr.compose.ludens.ui.icons.outlined.ArrowReset
-import com.yoimerdr.compose.ludens.ui.icons.outlined.ArrowSwap
 import com.yoimerdr.compose.ludens.ui.icons.outlined.Circle
-import com.yoimerdr.compose.ludens.ui.icons.outlined.Code
 import com.yoimerdr.compose.ludens.ui.icons.outlined.Games
 import com.yoimerdr.compose.ludens.ui.icons.outlined.Person
 import com.yoimerdr.compose.ludens.ui.icons.outlined.Save
-import com.yoimerdr.compose.ludens.ui.icons.outlined.System
-import com.yoimerdr.compose.ludens.ui.icons.outlined.TopSpeed
+import com.yoimerdr.compose.ludens.ui.icons.outlined.Wrench
 import com.yoimerdr.compose.ludens.ui.theme.ConsoleCard
 import com.yoimerdr.compose.ludens.ui.theme.ConsoleColors
 import com.yoimerdr.compose.ludens.ui.theme.ConsoleFooter
@@ -58,7 +52,7 @@ import kotlinx.coroutines.launch
 /**
  * Local form state held by the cheat screen. All fields are kept as raw strings so text fields
  * can be freely edited (including transient invalid/empty states) without fighting the user;
- * values are parsed defensively at the point of use via [toSafeInt]/[toSafeFloat].
+ * values are parsed defensively at the point of use via [toSafeInt].
  */
 private data class CheatFormState(
     val gold: String = "1000",
@@ -66,40 +60,24 @@ private data class CheatFormState(
     val hp: String = "999",
     val mp: String = "999",
     val level: String = "10",
-    val itemKind: ItemKind = ItemKind.Item,
-    val itemId: String = "1",
-    val itemCount: String = "1",
-    val mapId: String = "1",
-    val teleportX: String = "0",
-    val teleportY: String = "0",
-    val speed: String = "2",
     val saveSlot: String = "1",
-    val damageMultiplier: String = "1",
 )
-
-private enum class ItemKind(val label: String) {
-    Item("Eşya"),
-    Weapon("Silah"),
-    Armor("Zırh"),
-}
 
 /** Parses a string field as an int, falling back to [default] for blank/invalid input. */
 private fun String.toSafeInt(default: Int = 0): Int = trim().toIntOrNull() ?: default
 
-/** Parses a string field as a float, falling back to [default] for blank/invalid input. */
-private fun String.toSafeFloat(default: Float = 1f): Float = trim().toFloatOrNull() ?: default
-
 /**
  * Full-screen debug/cheat menu for the currently loaded game.
  *
- * Every action here operates directly on core RPG Maker MV/MZ engine objects
- * (`$gameParty`, `$gameActors`, `$gamePlayer`, ...) through [CheatPlayer], so it works on any
- * exported game regardless of which plugins it bundles. The game keeps running behind this
- * screen (it is not reloaded), so changes are visible immediately once you go back.
+ * Kept intentionally small: gold, character stats, and save/load -- the basics that don't need
+ * a dedicated UI of their own. Anything more involved (item/variable/switch editing, no-clip,
+ * god mode, speed, teleport, and more) lives in the bundled **Gelişmiş Hileler** (Advanced
+ * Cheats) panel instead, so the same capability isn't built twice.
  *
- * God mode and walk-through-walls both keep running in the background independently of this
- * screen, so their switches read back the actual live state on every entry rather than always
- * starting unchecked.
+ * Every action here operates directly on core RPG Maker MV/MZ engine objects
+ * (`$gameParty`, `$gameActors`, ...) through [CheatPlayer], so it works on any exported game
+ * regardless of which plugins it bundles. The game keeps running behind this screen (it is not
+ * reloaded), so changes are visible immediately once you go back.
  *
  * @param nav Navigation controller used to close this screen.
  * @param cheatPlayer The [CheatPlayer] used to apply cheat commands. Defaults to [LocalCheatPlayer].
@@ -111,22 +89,11 @@ fun CheatsScreen(
 ) {
     val spacing = LocalSpacing.current
     var form by remember { mutableStateOf(CheatFormState()) }
-    var godMode by remember { mutableStateOf(false) }
-    var walkThroughWalls by remember { mutableStateOf(false) }
-    var instantKill by remember { mutableStateOf(false) }
-    var encountersEnabled by remember { mutableStateOf(true) }
     var isGameActive by remember { mutableStateOf<Boolean?>(null) }
     val scope = rememberCoroutineScope()
 
     suspend fun refreshState() {
         isGameActive = cheatPlayer.isGameActive()
-        godMode = cheatPlayer.isGodModeActive()
-        walkThroughWalls = cheatPlayer.isWalkThroughWallsActive()
-        instantKill = cheatPlayer.isInstantKillActive()
-        encountersEnabled = cheatPlayer.isEncountersEnabled()
-        form = form.copy(damageMultiplier = cheatPlayer.getDamageMultiplier().let {
-            if (it == it.toInt().toFloat()) it.toInt().toString() else it.toString()
-        })
     }
 
     LaunchedEffect(Unit) {
@@ -143,7 +110,7 @@ fun CheatsScreen(
                 .fillMaxSize()
                 .systemBarsPadding()
                 .padding(horizontal = spacing.small, vertical = spacing.medium),
-            verticalArrangement = Arrangement.spacedBy(spacing.large),
+            verticalArrangement = Arrangement.spacedBy(spacing.medium),
         ) {
             ConsoleHeader(
                 eyebrow = "SYSTEM // CHEATS.EXE",
@@ -176,8 +143,30 @@ fun CheatsScreen(
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(spacing.large),
+                verticalArrangement = Arrangement.spacedBy(spacing.medium),
             ) {
+                item {
+                    ConsoleCard(title = "Gelişmiş Hileler", tag = "// ADVANCED", icon = LudensIcons.Default.Wrench, accent = ConsoleColors.Violet) {
+                        Text(
+                            text = "Eşya, değişken, switch düzenleme, no-clip, god mode, hız, " +
+                                    "ışınlanma ve daha fazlası için gelişmiş hile panelini açın.",
+                            color = ConsoleColors.TextMuted,
+                        )
+                        ConsoleFilledButton(
+                            text = "Gelişmiş Hile Panelini Aç",
+                            accent = ConsoleColors.Violet,
+                            fullWidth = true,
+                            onClick = { cheatPlayer.openAdvancedCheats() },
+                        )
+                        Text(
+                            text = "Not: panel ilk açılışta stil dosyaları için internet " +
+                                    "bağlantısı gerektirebilir. Oyun bu paneli içermiyorsa " +
+                                    "hiçbir şey olmaz.",
+                            color = ConsoleColors.TextFaint,
+                        )
+                    }
+                }
+
                 item {
                     ConsoleCard(
                         title = "Altın",
@@ -224,7 +213,10 @@ fun CheatsScreen(
                             onValueChange = { form = form.copy(actorId = it) },
                             accent = ConsoleColors.Green,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+                        ) {
                             ConsoleTextField(
                                 modifier = Modifier.weight(1f),
                                 label = "HP",
@@ -263,6 +255,7 @@ fun CheatsScreen(
                             )
                         }
                         Row(
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(spacing.small),
                         ) {
@@ -278,212 +271,6 @@ fun CheatsScreen(
                                 accent = ConsoleColors.Green,
                                 onClick = {
                                     cheatPlayer.setActorLevel(form.actorId.toSafeInt(1), form.level.toSafeInt(1))
-                                },
-                            )
-                        }
-                    }
-                }
-
-                item {
-                    ConsoleCard(
-                        title = "Eşya Ekle",
-                        tag = "// INVENTORY",
-                        icon = LudensIcons.Default.ArrowDownload,
-                        accent = ConsoleColors.Violet,
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
-                        ) {
-                            ItemKind.entries.forEach { kind ->
-                                val selected = form.itemKind == kind
-                                if (selected) {
-                                    ConsoleFilledButton(
-                                        modifier = Modifier.weight(1f),
-                                        text = kind.label,
-                                        accent = ConsoleColors.Violet,
-                                        onClick = { form = form.copy(itemKind = kind) },
-                                    )
-                                } else {
-                                    ConsoleOutlinedButton(
-                                        modifier = Modifier.weight(1f),
-                                        text = kind.label,
-                                        accent = ConsoleColors.Violet,
-                                        onClick = { form = form.copy(itemKind = kind) },
-                                    )
-                                }
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
-                            ConsoleTextField(
-                                modifier = Modifier.weight(1f),
-                                label = "ID",
-                                value = form.itemId,
-                                onValueChange = { form = form.copy(itemId = it) },
-                                accent = ConsoleColors.Violet,
-                            )
-                            ConsoleTextField(
-                                modifier = Modifier.weight(1f),
-                                label = "Adet",
-                                value = form.itemCount,
-                                onValueChange = { form = form.copy(itemCount = it) },
-                                accent = ConsoleColors.Violet,
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
-                        ) {
-                            ConsoleFilledButton(
-                                modifier = Modifier.weight(1f),
-                                text = "Envantere Ekle",
-                                accent = ConsoleColors.Violet,
-                                onClick = {
-                                    val id = form.itemId.toSafeInt(1)
-                                    val count = form.itemCount.toSafeInt(1)
-                                    when (form.itemKind) {
-                                        ItemKind.Item -> cheatPlayer.addItem(id, count)
-                                        ItemKind.Weapon -> cheatPlayer.addWeapon(id, count)
-                                        ItemKind.Armor -> cheatPlayer.addArmor(id, count)
-                                    }
-                                },
-                            )
-                            TextButton(
-                                modifier = Modifier.weight(1f),
-                                onClick = { cheatPlayer.addAllItems() },
-                            ) {
-                                Text("Tüm Eşyaları Ekle", color = ConsoleColors.Violet)
-                            }
-                        }
-                    }
-                }
-
-                item {
-                    ConsoleCard(
-                        title = "Işınlanma",
-                        tag = "// TELEPORT",
-                        icon = LudensIcons.Default.ArrowSwap,
-                        accent = ConsoleColors.Blue,
-                    ) {
-                        ConsoleTextField(
-                            label = "Harita ID",
-                            value = form.mapId,
-                            onValueChange = { form = form.copy(mapId = it) },
-                            accent = ConsoleColors.Blue,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
-                            ConsoleTextField(
-                                modifier = Modifier.weight(1f),
-                                label = "X",
-                                value = form.teleportX,
-                                onValueChange = { form = form.copy(teleportX = it) },
-                                accent = ConsoleColors.Blue,
-                            )
-                            ConsoleTextField(
-                                modifier = Modifier.weight(1f),
-                                label = "Y",
-                                value = form.teleportY,
-                                onValueChange = { form = form.copy(teleportY = it) },
-                                accent = ConsoleColors.Blue,
-                            )
-                        }
-                        ConsoleFilledButton(
-                            text = "Işınlan",
-                            accent = ConsoleColors.Blue,
-                            fullWidth = true,
-                            onClick = {
-                                cheatPlayer.teleport(
-                                    form.mapId.toSafeInt(1),
-                                    form.teleportX.toSafeInt(),
-                                    form.teleportY.toSafeInt(),
-                                )
-                            },
-                        )
-                    }
-                }
-
-                item {
-                    ConsoleCard(
-                        title = "Modlar",
-                        tag = "// MODES",
-                        icon = LudensIcons.Default.Code,
-                        accent = ConsoleColors.Pink,
-                    ) {
-                        ConsoleSwitchRow(
-                            text = "Ölümsüzlük Modu (God Mode)",
-                            checked = godMode,
-                            accent = ConsoleColors.Pink,
-                            onCheckedChange = {
-                                godMode = it
-                                cheatPlayer.setGodMode(it)
-                            },
-                        )
-                        ConsoleSwitchRow(
-                            text = "Duvarlardan Geçme",
-                            checked = walkThroughWalls,
-                            accent = ConsoleColors.Pink,
-                            onCheckedChange = {
-                                walkThroughWalls = it
-                                cheatPlayer.setWalkThroughWalls(it)
-                            },
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
-                        ) {
-                            Icon(LudensIcons.Default.TopSpeed, contentDescription = null, tint = ConsoleColors.Pink)
-                            ConsoleTextField(
-                                modifier = Modifier.weight(1f),
-                                label = "Oyun Hızı (1x-8x)",
-                                value = form.speed,
-                                onValueChange = { form = form.copy(speed = it) },
-                                accent = ConsoleColors.Pink,
-                            )
-                            ConsoleFilledButton(
-                                text = "Uygula",
-                                accent = ConsoleColors.Pink,
-                                onClick = { cheatPlayer.setGameSpeed(form.speed.toSafeFloat(1f)) },
-                            )
-                        }
-                    }
-                }
-
-                item {
-                    ConsoleCard(title = "Savaş", tag = "// BATTLE", icon = LudensIcons.Default.System, accent = ConsoleColors.Pink) {
-                        ConsoleSwitchRow(
-                            text = "Tek Vuruşta Öldür",
-                            checked = instantKill,
-                            accent = ConsoleColors.Pink,
-                            onCheckedChange = {
-                                instantKill = it
-                                cheatPlayer.setInstantKill(it)
-                            },
-                        )
-                        ConsoleSwitchRow(
-                            text = "Rastgele Savaşlar",
-                            checked = encountersEnabled,
-                            accent = ConsoleColors.Pink,
-                            onCheckedChange = {
-                                encountersEnabled = it
-                                cheatPlayer.setEncountersEnabled(it)
-                            },
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(spacing.small),
-                        ) {
-                            ConsoleTextField(
-                                modifier = Modifier.weight(1f),
-                                label = "Hasar Çarpanı (1x-99x)",
-                                value = form.damageMultiplier,
-                                onValueChange = { form = form.copy(damageMultiplier = it) },
-                                accent = ConsoleColors.Pink,
-                            )
-                            ConsoleFilledButton(
-                                text = "Uygula",
-                                accent = ConsoleColors.Pink,
-                                onClick = {
-                                    cheatPlayer.setDamageMultiplier(form.damageMultiplier.toSafeFloat(1f))
                                 },
                             )
                         }
@@ -537,7 +324,7 @@ fun CheatsScreen(
 
                 item {
                     Box(
-                        modifier = Modifier.fillMaxWidth().padding(top = spacing.small, bottom = spacing.large),
+                        modifier = Modifier.fillMaxWidth().padding(top = spacing.small, bottom = spacing.medium),
                         contentAlignment = Alignment.Center,
                     ) {
                         ConsoleFooter(text = "// riaslink.fun")
@@ -547,6 +334,9 @@ fun CheatsScreen(
         }
     }
 }
+
+/** Compact content padding shared by the console screens' buttons, for a lower profile. */
+private val CompactButtonPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
 
 /** A filled, accent-colored primary action button used across the console screens. */
 @Composable
@@ -560,6 +350,7 @@ private fun ConsoleFilledButton(
     FilledTonalButton(
         onClick = onClick,
         modifier = if (fullWidth) modifier.fillMaxWidth() else modifier,
+        contentPadding = CompactButtonPadding,
         colors = ButtonDefaults.filledTonalButtonColors(
             containerColor = accent.copy(alpha = 0.22f),
             contentColor = accent,
@@ -581,6 +372,7 @@ private fun ConsoleOutlinedButton(
     OutlinedButton(
         onClick = onClick,
         modifier = modifier,
+        contentPadding = CompactButtonPadding,
         colors = ButtonDefaults.outlinedButtonColors(contentColor = accent),
         border = BorderStroke(1.dp, accent.copy(alpha = 0.5f)),
     ) {
@@ -588,39 +380,5 @@ private fun ConsoleOutlinedButton(
             Icon(icon, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
         }
         Text(text)
-    }
-}
-
-/** A labeled switch row styled for the console screens' dark surfaces. */
-@Composable
-private fun ConsoleSwitchRow(
-    text: String,
-    checked: Boolean,
-    accent: Color,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = text,
-            color = ConsoleColors.TextPrimary,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = accent,
-                checkedTrackColor = accent.copy(alpha = 0.35f),
-                checkedBorderColor = accent,
-                uncheckedThumbColor = ConsoleColors.TextMuted,
-                uncheckedTrackColor = ConsoleColors.SurfaceRaised,
-                uncheckedBorderColor = ConsoleColors.Border,
-            ),
-        )
     }
 }
