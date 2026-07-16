@@ -16,7 +16,6 @@ import com.yoimerdr.compose.ludens.core.infrastructure.adapter.script.key.InputK
  * - KeyB -> Escape
  * - KeyX -> Shift
  * - KeyY -> Control
- * - KeyEsc -> Escape
  *
  * This can be used as default input key for the keys controls.
  *
@@ -28,7 +27,6 @@ fun ItemType.toInputKey(): InputKey? {
         ItemType.KeyB -> InputKey.Escape
         ItemType.KeyX -> InputKey.Shift
         ItemType.KeyY -> InputKey.Control
-        ItemType.KeyEsc -> InputKey.Escape
         else -> null
     }
 }
