@@ -3,7 +3,6 @@ package com.yoimerdr.compose.ludens.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -13,7 +12,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.yoimerdr.compose.ludens.app.navigation.Destination
 import com.yoimerdr.compose.ludens.app.navigation.navigateTo
@@ -104,22 +102,25 @@ private fun SplashContent(onLoad: ((WebFeaturesState) -> Unit)) {
 
     var splashId by remember { mutableStateOf(0) }
     var gifBytes by remember { mutableStateOf<ByteArray?>(null) }
-    var useFallback by remember { mutableStateOf(false) }
+    // Starts true (shows the default pulse logo immediately) rather than blank, so there's
+    // never a flash of empty gradient while settings/GIF bytes are still loading.
+    var useFallback by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         val selected = runCatching { getSystemSettings().first().splashId }.getOrDefault(0)
         splashId = selected
 
         if (selected in 1..5) {
-            gifBytes = runCatching {
+            val bytes = runCatching {
                 Res.readBytes("files/splash/acilis$selected.gif")
             }.getOrNull()
 
-            if (gifBytes == null) {
-                useFallback = true
+            if (bytes != null) {
+                gifBytes = bytes
+                useFallback = false
             }
-        } else {
-            useFallback = true
+            // else: leave useFallback = true (its starting value) — the default logo keeps
+            // showing rather than a blank screen.
         }
     }
 
@@ -139,7 +140,7 @@ private fun SplashContent(onLoad: ((WebFeaturesState) -> Unit)) {
         if (!useFallback && bytes != null) {
             GifImage(
                 bytes = bytes,
-                modifier = Modifier.fillMaxSize().padding(56.dp),
+                modifier = Modifier.fillMaxSize(),
                 onUnsupported = { useFallback = true },
             )
         }
