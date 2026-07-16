@@ -26,9 +26,8 @@ import kotlin.math.roundToInt
 /**
  * Displays a group of action control buttons for game input.
  *
- * This composable creates a container with up to 5 action buttons: 4 positioned
- * at the cardinal directions (center-end, bottom-center, top-center, center-start),
- * plus a 5th (typically the dedicated Escape button) centered within the diamond.
+ * This composable creates a container with up to 4 action buttons positioned
+ * at the cardinal directions (center-end, bottom-center, top-center, center-start).
  * Each button corresponds to a key control item and triggers input events when pressed
  * or released.
  *
@@ -66,7 +65,6 @@ fun KeyControls(
                 Alignment.BottomCenter,
                 Alignment.TopCenter,
                 Alignment.CenterStart,
-                Alignment.Center,
             )
         )
 
