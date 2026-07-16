@@ -22,10 +22,7 @@ enum class ItemType(val value: Int) {
     KeyY(4),
 
     /** The fast actions button */
-    Actions(5),
-
-    /** A dedicated Escape/Cancel button, separate from the four remappable action buttons. */
-    KeyEsc(6);
+    Actions(5);
 
     companion object {
         /**
@@ -44,7 +41,7 @@ enum class ItemType(val value: Int) {
          * Set of all key-type items.
          */
         val keys: Set<ItemType>
-            get() = setOf(KeyA, KeyB, KeyX, KeyY, KeyEsc)
+            get() = setOf(KeyA, KeyB, KeyX, KeyY)
 
         val Settings = Actions
     }
@@ -57,7 +54,7 @@ enum class ItemType(val value: Int) {
     fun toPositionable(): PositionableType {
         return when (this) {
             Joystick -> PositionableType.Joystick
-            KeyA, KeyB, KeyX, KeyY, KeyEsc -> PositionableType.Keys
+            KeyA, KeyB, KeyX, KeyY -> PositionableType.Keys
             Actions -> PositionableType.Actions
         }
     }
@@ -73,7 +70,6 @@ enum class ItemType(val value: Int) {
             KeyB -> "B"
             KeyX -> "X"
             KeyY -> "Y"
-            KeyEsc -> "ESC"
         }
 
     /**
