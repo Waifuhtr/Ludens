@@ -1,13 +1,27 @@
 package com.yoimerdr.compose.ludens.features.home.presentation.sections
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.yoimerdr.compose.ludens.app.ui.providers.LocalInputPlayer
+import com.yoimerdr.compose.ludens.core.domain.model.key.InputKeyEvent
+import com.yoimerdr.compose.ludens.core.domain.model.key.KeyEventType
 import com.yoimerdr.compose.ludens.core.domain.model.settings.ItemType
 import com.yoimerdr.compose.ludens.core.domain.model.settings.PositionableType
+import com.yoimerdr.compose.ludens.core.infrastructure.adapter.script.key.InputKey
 import com.yoimerdr.compose.ludens.core.presentation.extension.settings.getEnabled
 import com.yoimerdr.compose.ludens.core.presentation.model.settings.ActionSettingsState
 import com.yoimerdr.compose.ludens.core.presentation.model.settings.ControlSettingsState
@@ -16,6 +30,8 @@ import com.yoimerdr.compose.ludens.features.home.presentation.components.Joystic
 import com.yoimerdr.compose.ludens.features.home.presentation.state.HomeEvent
 import com.yoimerdr.compose.ludens.features.home.presentation.viewmodel.HomeViewModel
 import com.yoimerdr.compose.ludens.ui.components.provider.LocalPlugin
+import com.yoimerdr.compose.ludens.ui.icons.LudensIcons
+import com.yoimerdr.compose.ludens.ui.icons.outlined.Dismiss
 import kotlinx.collections.immutable.persistentListOf
 
 /**
@@ -138,6 +154,40 @@ fun BoxScope.HomeScreenContent(
 }
 
 /**
+ * A standalone, always-available Escape/Cancel button, fixed in the top-right area of the
+ * screen, separate from the four remappable A/B/X/Y action buttons and not part of the
+ * user-repositionable controls system. Tapping it sends [InputKey.Escape] to the game, exactly
+ * like the desktop Escape key (closes menus, cancels choices).
+ *
+ * Offset below [SettingsActions] (also top-right) so the two never overlap.
+ */
+@Composable
+private fun BoxScope.EscButton() {
+    val player = LocalInputPlayer.current
+    IconButton(
+        onClick = {
+            player.onKeyEvent(
+                key = InputKeyEvent(code = InputKey.Escape.code, type = KeyEventType.Down, timeout = null),
+                pressed = false,
+            )
+        },
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(top = 76.dp, end = 8.dp)
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape)
+    ) {
+        Icon(
+            imageVector = LudensIcons.Default.Dismiss,
+            contentDescription = "Esc",
+            tint = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+/**
  * Internal implementation of HomeScreenContent that orchestrates the layout of controls.
  *
  * Iterates through positioned controls (Actions, Joystick, Keys) and renders them
@@ -156,6 +206,8 @@ private fun BoxScope.HomeScreenContent(
     onConfiguration: () -> Unit,
 ) {
     var showSettings = false
+
+    EscButton()
 
     controls.positions.forEach {
         when (it.type) {
