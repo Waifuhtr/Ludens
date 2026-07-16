@@ -177,26 +177,40 @@ class CheatPlayerAdapter(
         )
     }
 
+    /**
+     * Idempotently installs a single patch on `Game_Action.prototype.makeDamageValue` shared by
+     * [setDamageMultiplier] and [setInstantKill]. Both act on the *computed damage value* rather
+     * than forcing HP afterwards, so a lethal hit flows through the engine's normal damage
+     * pipeline (state removal, death animation, victory checks) exactly like any other hit.
+     */
+    private val ensureDamagePatchScript = """
+        (function(){
+            if(window.Game_Action&&!window.__ludensDamagePatched){
+                window.__ludensDamagePatched=true;
+                window.__ludensDamageMultiplier=1;
+                window.__ludensInstaKill=false;
+                var _makeDamageValue=window.Game_Action.prototype.makeDamageValue;
+                window.Game_Action.prototype.makeDamageValue=function(target,critical){
+                    var value=_makeDamageValue.call(this,target,critical);
+                    var subject=this.subject&&this.subject();
+                    var fromActor=subject&&subject.isActor&&subject.isActor();
+                    if(fromActor&&this.isDamage&&this.isDamage()){
+                        if(window.__ludensInstaKill&&target){
+                            value=Math.max(value,target.hp);
+                        } else if(value>0){
+                            value=Math.round(value*(window.__ludensDamageMultiplier||1));
+                        }
+                    }
+                    return value;
+                };
+            }
+        })();
+    """.trimIndent()
+
     override fun setDamageMultiplier(multiplier: Float) {
         val safeMultiplier = multiplier.coerceIn(1f, 99f)
         evaluator.evaluateScript(
-            """
-            (function(){
-                if(window.Game_Action&&!window.__ludensDamagePatched){
-                    window.__ludensDamagePatched=true;
-                    window.__ludensDamageMultiplier=1;
-                    var _makeDamageValue=window.Game_Action.prototype.makeDamageValue;
-                    window.Game_Action.prototype.makeDamageValue=function(target,critical){
-                        var value=_makeDamageValue.call(this,target,critical);
-                        if(this.subject&&this.subject()&&this.subject().isActor&&this.subject().isActor()&&this.isDamage&&this.isDamage()&&value>0){
-                            value=Math.round(value*(window.__ludensDamageMultiplier||1));
-                        }
-                        return value;
-                    };
-                }
-                window.__ludensDamageMultiplier=$safeMultiplier;
-            })();
-            """.trimIndent()
+            "$ensureDamagePatchScript\nwindow.__ludensDamageMultiplier=$safeMultiplier;"
         )
     }
 
@@ -206,22 +220,7 @@ class CheatPlayerAdapter(
 
     override fun setInstantKill(enabled: Boolean) {
         evaluator.evaluateScript(
-            """
-            (function(){
-                if(window.Game_Action&&!window.__ludensInstaKillPatched){
-                    window.__ludensInstaKillPatched=true;
-                    window.__ludensInstaKill=false;
-                    var _apply=window.Game_Action.prototype.apply;
-                    window.Game_Action.prototype.apply=function(target){
-                        _apply.call(this,target);
-                        if(window.__ludensInstaKill&&target&&this.subject&&this.subject()&&this.subject().isActor&&this.subject().isActor()&&this.isDamage&&this.isDamage()&&!target.isDead()){
-                            target.setHp(0);
-                        }
-                    };
-                }
-                window.__ludensInstaKill=$enabled;
-            })();
-            """.trimIndent()
+            "$ensureDamagePatchScript\nwindow.__ludensInstaKill=$enabled;"
         )
     }
 
@@ -282,5 +281,11 @@ class CheatPlayerAdapter(
 
     override suspend fun isGameActive(): Boolean {
         return evaluator.evaluatingScript("!!window.\$gameParty").toBoolean()
+    }
+
+    override fun openAdvancedCheats() {
+        evaluator.evaluateScript(
+            "if(window.__ludensAdvancedCheat){window.__ludensAdvancedCheat.open();}"
+        )
     }
 }
