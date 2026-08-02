@@ -8,12 +8,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yoimerdr.compose.ludens.app.ui.providers.LocalInputPlayer
@@ -32,6 +32,7 @@ import com.yoimerdr.compose.ludens.features.home.presentation.viewmodel.HomeView
 import com.yoimerdr.compose.ludens.ui.components.provider.LocalPlugin
 import com.yoimerdr.compose.ludens.ui.icons.LudensIcons
 import com.yoimerdr.compose.ludens.ui.icons.outlined.Dismiss
+import com.yoimerdr.compose.ludens.ui.theme.ConsoleColors
 import kotlinx.collections.immutable.persistentListOf
 
 /**
@@ -173,16 +174,18 @@ private fun BoxScope.EscButton() {
         },
         modifier = Modifier
             .align(Alignment.TopEnd)
-            .padding(top = 76.dp, end = 8.dp)
-            .size(40.dp)
+            .padding(top = 108.dp, end = 10.dp)
+            .shadow(elevation = 3.dp, shape = CircleShape)
+            .size(42.dp)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape)
+            .background(ConsoleColors.SurfaceRaised)
+            .border(1.5.dp, ConsoleColors.Cyan, CircleShape)
     ) {
         Icon(
             imageVector = LudensIcons.Default.Dismiss,
             contentDescription = "Esc",
-            tint = MaterialTheme.colorScheme.onSurface,
+            tint = ConsoleColors.Cyan,
+            modifier = Modifier.size(20.dp),
         )
     }
 }
