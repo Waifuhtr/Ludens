@@ -284,8 +284,26 @@ class CheatPlayerAdapter(
     }
 
     override fun openAdvancedCheats() {
+        // The bundled panel boots asynchronously (several script tags load in sequence:
+        // axios -> vue -> vuetify -> the panel's own component, then Vue mounts it), so the
+        // window.__ludensAdvancedCheat bridge may not exist yet at the exact moment this is
+        // called, especially right after the game finishes loading. Retrying for a few seconds
+        // covers that startup window instead of silently doing nothing on the first miss.
         evaluator.evaluateScript(
-            "if(window.__ludensAdvancedCheat){window.__ludensAdvancedCheat.open();}"
+            """
+            (function(){
+                var attempts=0;
+                var tryOpen=function(){
+                    if(window.__ludensAdvancedCheat){
+                        window.__ludensAdvancedCheat.open();
+                    } else if(attempts<20){
+                        attempts++;
+                        setTimeout(tryOpen,250);
+                    }
+                };
+                tryOpen();
+            })();
+            """.trimIndent()
         )
     }
 }
