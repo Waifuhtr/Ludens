@@ -18,8 +18,15 @@ instance.
 ## How it works
 
 - **Inference engine**: `llama-server` (from [llama.cpp](https://github.com/ggml-org/llama.cpp)),
-  compiled from source in the Docker build (see the note in the `Dockerfile`
-  about the STQ kernel this GGUF depends on — it needs a recent llama.cpp).
+  compiled from source in the Docker build. This GGUF depends on the
+  `STQ1_0` quant kernel from
+  [PR #22836](https://github.com/ggml-org/llama.cpp/pull/22836), which is
+  **not yet merged into llama.cpp `master`** (verified directly) — a plain
+  `pip install llama-cpp-python` or a vanilla clone of master will compile
+  but fail to load this GGUF at runtime. The `Dockerfile` clones master and
+  cherry-picks the 3 commits that make up that PR (verified to apply
+  cleanly, zero conflicts); it auto-skips the cherry-pick once upstream
+  merges it, so no edits are needed later.
   It's started with `--threads 8 --parallel 8 --cont-batching`, which uses
   llama.cpp's continuous batching to combine multiple in-flight requests'
   forward passes into shared compute instead of running them one at a time.

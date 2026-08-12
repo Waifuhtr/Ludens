@@ -3,27 +3,46 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build llama-server from source.
 #
-# IMPORTANT: tencent/Hy-MT2-7B-GGUF depends on a custom "STQ" ggml kernel
-# that shipped in https://github.com/ggml-org/llama.cpp/pull/22836. A pip
-# install of llama-cpp-python pins an older llama.cpp commit and will very
-# likely NOT be able to load this GGUF (unknown tensor type / load error).
-# Building llama.cpp from source here (default: the `main` branch, which
-# should have the PR merged by now) avoids that. If it hasn't landed yet,
-# rebuild with:
-#   docker build --build-arg LLAMA_CPP_REF=refs/pull/22836/head -t hy-mt2-api .
+# IMPORTANT: tencent/Hy-MT2-7B-GGUF depends on the "STQ1_0" ggml quant kernel
+# from https://github.com/ggml-org/llama.cpp/pull/22836, which is NOT merged
+# into llama.cpp's `master` as of this writing (confirmed by cloning master
+# and grepping for GGML_TYPE_STQ1_0 - absent). Plain `pip install
+# llama-cpp-python` or a vanilla `git clone` of master will compile fine but
+# fail to load this GGUF at runtime ("unknown tensor type" / load error).
+#
+# Fix: clone master, then cherry-pick the 3 commits that make up the PR
+# (verified below to cherry-pick cleanly with zero conflicts onto current
+# master):
+#   5503c4b8  Add support for STQ_0 ternary quantization
+#   5165daa8  rename STQ_0 to STQ1_0 according to reviewer suggestion
+#   1e411d8f  ggml-cpu : fix STQ1_0 CI failures
+# The build skips the cherry-pick automatically once upstream merges the
+# PR (detected via a grep for GGML_TYPE_STQ1_0), so this stays correct
+# without edits. To pin a specific base commit/branch instead of master,
+# use --build-arg LLAMA_CPP_REF=<ref>.
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS builder
 
-ARG LLAMA_CPP_REF=main
+ARG LLAMA_CPP_REF=master
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git ca-certificates libcurl4-openssl-dev pkg-config \
+    build-essential cmake git ca-certificates libcurl4-openssl-dev libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 RUN git clone https://github.com/ggml-org/llama.cpp.git . \
-    && if [ "$LLAMA_CPP_REF" != "main" ]; then \
+    && if [ "$LLAMA_CPP_REF" != "master" ]; then \
          git fetch origin "$LLAMA_CPP_REF" && git checkout FETCH_HEAD; \
+       fi \
+    && if grep -q GGML_TYPE_STQ1_0 ggml/include/ggml.h; then \
+         echo "STQ1_0 kernel already present upstream, skipping cherry-pick"; \
+       else \
+         echo "STQ1_0 kernel missing, cherry-picking from PR #22836" \
+         && git fetch origin refs/pull/22836/head:stq-pr \
+         && git cherry-pick -x \
+              5503c4b816da60cafd3cfc275dd9f50f079e0cf4 \
+              5165daa88c2a36a663534d6cbefd6e13b3fe4623 \
+              1e411d8f5a1e23525fa3265dfb4bd76265465397; \
        fi
 
 # GGML_NATIVE=OFF because the Docker build machine's CPU may differ from the
