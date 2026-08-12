@@ -27,6 +27,8 @@ instance.
   cherry-picks the 3 commits that make up that PR (verified to apply
   cleanly, zero conflicts); it auto-skips the cherry-pick once upstream
   merges it, so no edits are needed later.
+  The build is pinned to `-j2` (`BUILD_JOBS`) — see
+  [Build notes](#build-notes), this is what stopped the build from hanging.
   It's started with `--threads 8 --parallel 8 --cont-batching`, which uses
   llama.cpp's continuous batching to combine multiple in-flight requests'
   forward passes into shared compute instead of running them one at a time.
@@ -54,12 +56,11 @@ Hy-MT2 documents support for).
 ```json
 {
   "text": "Where is the nearest potion shop?",
-  "target_lang": "tr",
-  "preserve_placeholders": true
+  "target_lang": "tr"
 }
 ```
 ```json
-{ "translation": "En yakın iksir dükkanı nerede?", "elapsed_seconds": 0.41 }
+{ "translation": "En yakın iksir dükkanı nerede?", "elapsed_seconds": 4.82 }
 ```
 
 ### `POST /translate/batch` — many strings in one call (recommended: 50-100 per call)
@@ -95,7 +96,7 @@ server-side safety cap on a single call.
 | `source_lang` | string, optional | omit to let the model auto-detect |
 | `style` | string, optional | e.g. `"casual, playful"` — injected as a style instruction |
 | `glossary` | object, optional | `{"HP": "Can Puanı"}` — forces specific term translations |
-| `preserve_placeholders` | bool, default `true` | instructs the model to never touch `\N[1]`, `\V[1]`, `{var}`, `%s`, `%1`, etc. — important for RPG Maker / game strings |
+| `preserve_placeholders` | bool, default `false` | adds an explicit "keep placeholders verbatim" clause. **Leave it off**: Hy-MT2 already preserves `\V[1]`, `%1`, `{var}` etc. on its own (measured — see [Verified behaviour](#verified-behaviour)), so the clause only costs prompt tokens |
 
 ### Auth
 Set the `API_KEY` env var on the Space to require an `X-API-Key` header on
@@ -105,7 +106,8 @@ Set the `API_KEY` env var on the Space to require an `X-API-Key` header on
 
 | var | default | meaning |
 |---|---|---|
-| `MODEL_FILE` | `Hy-MT2-7B-Q4_K_M.gguf` | switch to `HY-MT2-7B-Q6_K.gguf` or `HY-MT2-7B-Q8_0.gguf` for higher quality / slower |
+| `MODEL_REPO` | `tencent/Hy-MT2-7B-GGUF` | set to `tencent/Hy-MT2-1.8B-GGUF` (with a matching `MODEL_FILE`) to trade quality for a large throughput win on bulk jobs |
+| `MODEL_FILE` | `Hy-MT2-7B-Q4_K_M.gguf` | `HY-MT2-7B-Q6_K.gguf` / `HY-MT2-7B-Q8_0.gguf` for higher quality (both fit in 32 GB), or `Hy-MT2-1.8B-Q4_K_M.gguf` with the 1.8B repo |
 | `THREADS` | `8` | CPU threads for llama-server |
 | `PARALLEL_SLOTS` | `8` | concurrent generation slots (continuous batching) |
 | `CTX_SIZE` | `16384` | total context, split across `PARALLEL_SLOTS` slots |
@@ -135,3 +137,72 @@ docker run -p 7860:7860 --cpus 8 --memory 32g hy-mt2-api
 
 Then open `test-ui/index.html` in a browser, point it at
 `http://localhost:7860`, and use it to benchmark single vs. batch requests.
+
+## Verified behaviour
+
+The stack below was actually run end to end against
+`Hy-MT2-7B-Q4_K_M.gguf` (real model, real llama-server built exactly as the
+`Dockerfile` builds it) on a **4-core / 15 GB** box — smaller than the 8 vCPU
+Space, so treat these as a floor, not a target.
+
+- The STQ1_0 cherry-pick works: the model loads and generates. This was the
+  whole open question, and it is settled.
+- Translation quality spot-checks (EN→TR): `"Potion"` → `"İksir"`,
+  `"Are you sure you want to quit the game?"` →
+  `"Oyundan çıkmak istediğinizden emin misiniz?"`.
+- **Placeholders survive untouched with no special instruction**:
+  `"You have obtained \V[1] gold."` → `"\V[1] altın elde ettiniz."`, and
+  `"Press %1 to open your inventory."` →
+  `"Envanterinizi açmak için %1'e basın."`.
+- `glossary` and `style` both take effect: with `{"gold": "altın", "HP": "Can
+  Puanı"}` the model returned `"50 altınınız ve dolu Can Puanınız var."`;
+  with style `medieval, formal`, `"Hey, watch out!"` → `"Ey dostum, dikkatli
+  ol!"`.
+- Throughput, 8 short game strings, 4 slots on 4 cores:
+  **sequential 19.2 s vs. batch 12.2 s (1.58×)**. A 24-item batch of longer
+  sentences ran at 0.34 items/s. Expect roughly double on 8 vCPU.
+
+Planning number: at ~0.7 items/s (8 vCPU, 7B, sentence-length strings)
+50,000 strings is on the order of a day of wall-clock time. If that matters
+more than the last few quality points, switch `MODEL_REPO`/`MODEL_FILE` to
+the 1.8B GGUF — same API, same prompts, several times faster.
+
+### A note on `preserve_placeholders`
+
+An earlier version of this API sent a long "never translate `\N[..]`,
+`{variable}`, `%s` …" instruction on every request, with that list spelled
+out. Hy-MT2 is a pure translation model, not a general chat model: it
+**translated the instruction** instead of following it, and short inputs were
+destroyed outright — `"Potion"` came back as the Turkish text of the
+instruction, with the actual word gone. Anything the model is meant to obey
+has to live inside the single instruction line of the model card's documented
+templates, never as its own paragraph in front of the source text. The flag
+now defaults to off and, when enabled, adds one short clause with no literal
+placeholder examples.
+
+## Build notes
+
+The Docker build compiles llama.cpp, which is the slow part. Earlier builds
+**hung at 24% for 5+ hours and then died with no error message** — the giveaway
+was that they stopped at exactly the same source file every time. Cause:
+`-j$(nproc)` reads the *host's* core count on a Hugging Face build worker
+while the worker's memory ceiling is much lower, so dozens of concurrent g++
+processes thrash it into swap. Bounding it (`BUILD_JOBS=2`, plus
+`LLAMA_BUILD_UI=OFF` so the build stops fetching a UI tarball over the
+network) is the fix: the same target builds in **about 4 minutes at -j4** on a
+4-core machine.
+
+This cost is paid once — Docker layer caching skips the whole compile on
+later deploys as long as you don't edit the `Dockerfile`. Editing only
+`app/` or `test-ui/` rebuilds in seconds.
+
+Two other latent problems were fixed at the same time:
+
+- The old build produced a **shared** llama-server (`libllama.so`,
+  `libggml*.so`) but the runtime stage copied only the executable, so even a
+  successful build would have crashed at startup on a missing shared library.
+  The build is now static (`BUILD_SHARED_LIBS=OFF`), one file, and
+  `llama-server --version` runs as a build-time smoke test.
+- `--mlock` is deprecated in current llama.cpp (superseded by `--load-mode`),
+  so `entrypoint.sh` does not use it; the default mmap loading is right for a
+  4.6 GB model on 32 GB of RAM.

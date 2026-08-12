@@ -29,7 +29,7 @@ class TranslateRequest(BaseModel):
     source_lang: str | None = None
     style: str | None = None
     glossary: dict[str, str] | None = None
-    preserve_placeholders: bool = True
+    preserve_placeholders: bool = False
 
 
 class BatchTranslateRequest(BaseModel):
@@ -38,7 +38,7 @@ class BatchTranslateRequest(BaseModel):
     source_lang: str | None = None
     style: str | None = None
     glossary: dict[str, str] | None = None
-    preserve_placeholders: bool = True
+    preserve_placeholders: bool = False
 
 
 class TranslateResponse(BaseModel):

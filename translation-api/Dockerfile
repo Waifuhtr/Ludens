@@ -3,30 +3,28 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build llama-server from source.
 #
-# IMPORTANT: tencent/Hy-MT2-7B-GGUF depends on the "STQ1_0" ggml quant kernel
+# Why from source: tencent/Hy-MT2-7B-GGUF needs the "STQ1_0" ggml quant kernel
 # from https://github.com/ggml-org/llama.cpp/pull/22836, which is NOT merged
-# into llama.cpp's `master` as of this writing (confirmed by cloning master
-# and grepping for GGML_TYPE_STQ1_0 - absent). Plain `pip install
-# llama-cpp-python` or a vanilla `git clone` of master will compile fine but
-# fail to load this GGUF at runtime ("unknown tensor type" / load error).
-#
-# Fix: clone master, then cherry-pick the 3 commits that make up the PR
-# (verified below to cherry-pick cleanly with zero conflicts onto current
-# master):
-#   5503c4b8  Add support for STQ_0 ternary quantization
-#   5165daa8  rename STQ_0 to STQ1_0 according to reviewer suggestion
-#   1e411d8f  ggml-cpu : fix STQ1_0 CI failures
-# The build skips the cherry-pick automatically once upstream merges the
-# PR (detected via a grep for GGML_TYPE_STQ1_0), so this stays correct
-# without edits. To pin a specific base commit/branch instead of master,
-# use --build-arg LLAMA_CPP_REF=<ref>.
+# into llama.cpp master yet. A stock llama.cpp (or pip llama-cpp-python)
+# compiles fine but cannot load this GGUF. We clone master and cherry-pick the
+# 3 commits of that PR; the cherry-pick is skipped automatically once upstream
+# merges it (detected by grepping for GGML_TYPE_STQ1_0).
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS builder
 
 ARG LLAMA_CPP_REF=master
 
+# Bounded compile parallelism - this is what made earlier builds hang.
+# `-j$(nproc)` reads the *host's* core count on a Hugging Face build worker
+# (dozens of cores) while the worker's memory is capped far lower, so dozens
+# of concurrent g++ processes thrash it: the build froze at 24% for 5+ hours
+# and died with no error message. At -j2 peak memory stays around 3 GB and the
+# llama-server target finishes in roughly 10 minutes. Raise via
+# --build-arg BUILD_JOBS=4 only if you know the builder has RAM to spare.
+ARG BUILD_JOBS=2
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git ca-certificates libcurl4-openssl-dev libssl-dev pkg-config \
+    build-essential cmake git ca-certificates pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -47,24 +45,37 @@ RUN git config --global user.email "build@hy-mt2-api.local" \
               1e411d8f5a1e23525fa3265dfb4bd76265465397; \
        fi
 
-# GGML_NATIVE=OFF because the Docker build machine's CPU may differ from the
-# machine the image eventually runs on; GGML_AVX2=ON targets the common
-# baseline for modern cloud/Space CPUs. Drop it if you hit "illegal
-# instruction" at runtime on older hardware.
+# BUILD_SHARED_LIBS=OFF produces one self-contained llama-server instead of a
+# binary plus libllama.so / libggml*.so - the runtime stage copies a single
+# file, so a shared build would have died at startup on a missing .so.
+# LLAMA_BUILD_UI=OFF skips the embedded web UI, which otherwise downloads a
+# tarball from huggingface.co during the build (it was already failing over to
+# a fallback URL in the logs) - the FastAPI gateway is the only frontend here.
+# GGML_NATIVE=OFF + GGML_AVX2=ON: the build worker's CPU is not the CPU the
+# Space runs on, so target a portable AVX2 baseline rather than -march=native.
+# Static libstdc++/libgcc so the binary does not depend on the builder image's
+# GCC runtime matching the (newer) runtime image's.
 RUN cmake -B build \
       -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_SHARED_LIBS=OFF \
       -DLLAMA_CURL=OFF \
+      -DLLAMA_BUILD_UI=OFF \
+      -DLLAMA_BUILD_TESTS=OFF \
+      -DLLAMA_BUILD_EXAMPLES=OFF \
       -DGGML_NATIVE=OFF \
       -DGGML_AVX2=ON \
-    && cmake --build build --config Release -j"$(nproc)" --target llama-server
+      -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+    && cmake --build build --config Release -j"${BUILD_JOBS}" --target llama-server
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime image (FastAPI gateway + llama-server binary)
 # ---------------------------------------------------------------------------
 FROM python:3.11-slim
 
+# libgomp1 = OpenMP runtime, the only shared library the static llama-server
+# still needs beyond glibc. curl is used by entrypoint.sh's readiness probe.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 libcurl4 curl \
+    libgomp1 curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -76,7 +87,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY entrypoint.sh .
-RUN chmod +x /app/llama-server /app/entrypoint.sh
+# --version is a real build-time smoke test: it fails the build if the binary
+# cannot start (e.g. a missing shared library), instead of letting the Space
+# deploy and only then crash on first request.
+RUN chmod +x /app/llama-server /app/entrypoint.sh \
+    && /app/llama-server --version
 
 ENV MODEL_REPO=tencent/Hy-MT2-7B-GGUF \
     MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf \

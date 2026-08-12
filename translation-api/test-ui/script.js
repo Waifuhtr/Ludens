@@ -66,7 +66,7 @@ function getLines() {
 function requestBody(texts) {
   const body = {
     target_lang: $("targetLang").value,
-    preserve_placeholders: true,
+    preserve_placeholders: false,
   };
   const source = $("sourceLang").value;
   if (source) body.source_lang = source;

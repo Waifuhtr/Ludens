@@ -45,13 +45,16 @@ LANGUAGES = {
     "ug": "Uyghur",
 }
 
-# Placeholder styles commonly found in game strings (RPG Maker control codes,
-# printf-style format specifiers, ICU/handlebars-style variables) that the
-# model must copy through untouched rather than translate.
-_PLACEHOLDER_HINT = (
-    "You must NEVER translate or alter placeholders and control codes such as "
-    r"\N[..], \V[..], \C[..], \I[..], {variable}, ${variable}, %s, %d, %1, {{var}} "
-    "or similar tokens. Keep them exactly as they appear, in the same position."
+# Opt-in only. Hy-MT2 already preserves placeholders and control codes
+# (\V[1], %1, {var}, ...) on its own - verified against the 7B Q4_K_M model -
+# so this clause is off by default: it costs prompt tokens without improving
+# the result. Keep it to a single short sentence with no literal examples of
+# the tokens themselves; a longer version listing sample placeholders gets
+# treated as source text and translated instead of followed, which destroys
+# short inputs ("Potion" came back as the translated instruction).
+_PLACEHOLDER_CLAUSE = (
+    ". You must keep every placeholder, variable and control code exactly as "
+    "it appears, and must not translate, escape or reorder them"
 )
 
 
@@ -67,36 +70,42 @@ def build_prompt(
     source_lang: str | None = None,
     style: str | None = None,
     glossary: dict[str, str] | None = None,
-    preserve_placeholders: bool = True,
+    preserve_placeholders: bool = False,
 ) -> str:
+    """Build a single-turn prompt in one of the instruction shapes documented on
+    the Hy-MT2 model card. Everything the model is meant to *follow* has to stay
+    inside the one instruction line - anything placed as its own paragraph ahead
+    of the source text is read as more text to translate.
+    """
     target_name = resolve_language(target_lang)
 
-    header = (
-        f"Translate the following text into {target_name}. "
-        "Note that you should only output the translated result "
-        "without any additional explanation"
-    )
-    if source_lang:
-        source_name = resolve_language(source_lang)
-        header += f". The source text is in {source_name}"
-    header += "."
-
-    parts = [header]
-
     if style:
-        parts.append(
-            f"Note that the translation style must strictly conform to [{style}]."
+        # "Style" template from the model card.
+        instruction = (
+            f"Please translate the following text into {target_name}. "
+            f"Note that the translation style must strictly conform to [{style}]"
+        )
+    else:
+        # "Default Translation" template from the model card.
+        instruction = (
+            f"Translate the following text into {target_name}. "
+            "Note that you should only output the translated result "
+            "without any additional explanation"
         )
 
-    if glossary:
-        ref_lines = "\n".join(f"{k} translates to {v}" for k, v in glossary.items())
-        parts.insert(
-            0,
-            "Reference the following translations:\n" + ref_lines,
-        )
+    if source_lang:
+        instruction += f". The source text is in {resolve_language(source_lang)}"
 
     if preserve_placeholders:
-        parts.append(_PLACEHOLDER_HINT)
+        instruction += _PLACEHOLDER_CLAUSE
 
-    instruction = "\n".join(parts)
+    instruction += ":"
+
+    if glossary:
+        # "Terminology" template: reference pairs go *before* the task line.
+        ref_lines = "\n".join(f"{k} translates to {v}" for k, v in glossary.items())
+        instruction = (
+            "Reference the following translations:\n" + ref_lines + "\n\n" + instruction
+        )
+
     return f"{instruction}\n\n{text}"
