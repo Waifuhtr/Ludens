@@ -30,7 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-RUN git clone https://github.com/ggml-org/llama.cpp.git . \
+RUN git config --global user.email "build@hy-mt2-api.local" \
+    && git config --global user.name "hy-mt2-api Docker build" \
+    && git clone https://github.com/ggml-org/llama.cpp.git . \
     && if [ "$LLAMA_CPP_REF" != "master" ]; then \
          git fetch origin "$LLAMA_CPP_REF" && git checkout FETCH_HEAD; \
        fi \
