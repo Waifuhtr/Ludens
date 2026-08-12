@@ -8,9 +8,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config, llama_client
-from .translation import LANGUAGES, build_prompt
+from .translation import LANGUAGES, build_messages
 
-app = FastAPI(title="Hy-MT2 Translation API", version="1.0.0")
+app = FastAPI(title="Translation API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -74,6 +74,7 @@ async def health_check():
         "llama_server": backend_ok,
         "parallel_slots": config.PARALLEL_SLOTS,
         "model_file": config.MODEL_FILE,
+        "prompt_format": config.PROMPT_FORMAT,
     }
 
 
@@ -84,17 +85,18 @@ async def languages():
 
 @app.post("/translate", response_model=TranslateResponse, dependencies=[Depends(verify_api_key)])
 async def translate(req: TranslateRequest):
-    prompt = build_prompt(
+    messages = build_messages(
         req.text,
         req.target_lang,
         req.source_lang,
         req.style,
         req.glossary,
         req.preserve_placeholders,
+        config.PROMPT_FORMAT,
     )
     start = time.perf_counter()
     try:
-        translation = await llama_client.chat_complete(prompt)
+        translation = await llama_client.chat_complete(messages)
     except llama_client.LlamaServerError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     elapsed = time.perf_counter() - start
@@ -118,15 +120,16 @@ async def translate_batch(req: BatchTranslateRequest):
         )
 
     async def _translate_one(text: str):
-        prompt = build_prompt(
+        messages = build_messages(
             text,
             req.target_lang,
             req.source_lang,
             req.style,
             req.glossary,
             req.preserve_placeholders,
+            config.PROMPT_FORMAT,
         )
-        return await llama_client.chat_complete(prompt)
+        return await llama_client.chat_complete(messages)
 
     start = time.perf_counter()
     results = await asyncio.gather(

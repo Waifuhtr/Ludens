@@ -1,0 +1,29 @@
+{#-
+  Chat template for yanolja/YanoljaNEXT-Rosetta-*, used only when
+  PROMPT_FORMAT=rosetta.
+
+  The template embedded in that GGUF cannot be used: it calls the Jinja
+  `default` filter on an object, which llama.cpp's minja engine does not
+  implement, so `llama-server --jinja` aborts at startup with
+  "Unknown (built-in) filter 'default' for type Object" and the server never
+  comes up. This is a minja-compatible rewrite producing byte-identical
+  output for the one-system-plus-one-user requests this API sends: it drops
+  the selectattr/default chains for plain loops.
+
+  Role mapping matches the original: system -> instruction, user -> source,
+  and the generation prompt opens a translation turn.
+-#}
+{{- bos_token -}}
+{%- for m in messages -%}
+{%- if m['role'] == 'system' -%}
+{{- '<start_of_turn>instruction\n' -}}{{- m['content'] | trim -}}{{- '<end_of_turn>\n' -}}
+{%- endif -%}
+{%- endfor -%}
+{%- for m in messages -%}
+{%- if m['role'] == 'user' -%}
+{{- '<start_of_turn>source\n' -}}{{- m['content'] | trim -}}{{- '<end_of_turn>\n' -}}
+{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+{{- '<start_of_turn>translation\n' -}}
+{%- endif -%}

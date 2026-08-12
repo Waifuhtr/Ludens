@@ -13,6 +13,25 @@ else
   echo "[entrypoint] Found cached model at ${MODEL_PATH}"
 fi
 
+# Rosetta's own embedded template uses a Jinja filter llama.cpp's minja engine
+# does not implement, and llama-server refuses to start rather than degrade -
+# so that family gets the bundled, minja-compatible rewrite instead. Hy-MT2
+# uses the template inside its GGUF.
+# Same inference rule as app/config.py, so setting MODEL_REPO alone keeps the
+# server flags and the prompt builder agreed on the format.
+RESOLVED_FORMAT="${PROMPT_FORMAT:-}"
+if [ -z "$RESOLVED_FORMAT" ]; then
+  case "$(echo "$MODEL_REPO" | tr '[:upper:]' '[:lower:]')" in
+    *rosetta*) RESOLVED_FORMAT="rosetta" ;;
+    *)         RESOLVED_FORMAT="hy-mt2" ;;
+  esac
+fi
+
+TEMPLATE_ARGS=()
+case "$RESOLVED_FORMAT" in
+  rosetta) TEMPLATE_ARGS=(--chat-template-file /app/chat-template-rosetta.jinja) ;;
+esac
+
 echo "[entrypoint] Starting llama-server (threads=${THREADS}, parallel=${PARALLEL_SLOTS}, ctx=${CTX_SIZE}) ..."
 /app/llama-server \
   --model "$MODEL_PATH" \
@@ -24,6 +43,7 @@ echo "[entrypoint] Starting llama-server (threads=${THREADS}, parallel=${PARALLE
   --parallel "${PARALLEL_SLOTS}" \
   --cont-batching \
   --jinja \
+  "${TEMPLATE_ARGS[@]}" \
   --no-webui &
 LLAMA_PID=$!
 

@@ -41,10 +41,10 @@ class LlamaServerError(RuntimeError):
     pass
 
 
-async def chat_complete(prompt: str) -> str:
+async def chat_complete(messages: list[dict[str, str]]) -> str:
     client = get_client()
     payload = {
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "temperature": config.TEMPERATURE,
         "top_p": config.TOP_P,
         "top_k": config.TOP_K,

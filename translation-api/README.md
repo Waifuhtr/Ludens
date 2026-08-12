@@ -113,7 +113,8 @@ Set the `API_KEY` env var on the Space to require an `X-API-Key` header on
 | `CTX_SIZE` | `16384` | total context, split across `PARALLEL_SLOTS` slots |
 | `MAX_TOKENS` | `512` | max output tokens per translation |
 | `MAX_BATCH_SIZE` | `200` | max items accepted per `/translate/batch` call |
-| `TEMPERATURE`/`TOP_P`/`TOP_K`/`REPEAT_PENALTY` | `0.7`/`0.6`/`20`/`1.05` | Hy-MT2 7B recommended sampling params |
+| `PROMPT_FORMAT` | inferred | `hy-mt2` or `rosetta` — see [Switching model family](#switching-model-family). Inferred from `MODEL_REPO`, so you rarely set it by hand |
+| `TEMPERATURE`/`TOP_P`/`TOP_K`/`REPEAT_PENALTY` | per family | `0.7`/`0.6`/`20`/`1.05` for Hy-MT2 (its model card's values), `0.7`/`0.95`/`64`/`1.0` for Rosetta (Gemma 3 defaults) |
 | `API_KEY` | *(empty)* | optional shared secret for `X-API-Key` |
 
 ## Deploying
@@ -179,6 +180,56 @@ has to live inside the single instruction line of the model card's documented
 templates, never as its own paragraph in front of the source text. The flag
 now defaults to off and, when enabled, adds one short clause with no literal
 placeholder examples.
+
+## Switching model family
+
+Two prompt families are supported. `PROMPT_FORMAT` selects one; leaving it
+unset infers it from `MODEL_REPO` (any repo whose name contains "rosetta"
+gets `rosetta`, everything else `hy-mt2`), so changing the model is usually a
+one-variable edit. `entrypoint.sh` applies the same rule, so the server flags
+and the prompt builder can't drift apart.
+
+- **`hy-mt2`** (default) — one user turn holding the instruction and the text,
+  using the model card's templates.
+- **`rosetta`** — [YanoljaNEXT-Rosetta](https://huggingface.co/yanolja/YanoljaNEXT-Rosetta-4B-2511-GGUF),
+  a Gemma 3 translation fine-tune. Directives go in a `system` turn
+  (`Tone:`, `Glossary:`, …) and only the source text in `user`; its chat
+  template renames those roles to `instruction` / `source`. Set both:
+  ```
+  MODEL_REPO=yanolja/YanoljaNEXT-Rosetta-4B-2511-GGUF
+  MODEL_FILE=Q5_K_M/YanoljaNEXT-Rosetta-4B-2511-bf16-q5_k_m.gguf
+  ```
+
+Rosetta ships a chat template that `llama-server` **cannot load**: it calls
+the Jinja `default` filter on an object, which llama.cpp's minja engine does
+not implement, and the server aborts at startup rather than degrade
+(`Unknown (built-in) filter 'default' for type Object`). `chat-template-rosetta.jinja`
+in this folder is a minja-compatible rewrite that renders identically for the
+one-system-plus-one-user requests this API sends; `entrypoint.sh` passes it
+via `--chat-template-file` whenever the format is `rosetta`.
+
+### Measured: Rosetta was slower, so it is not the default
+
+Same 10 lines of RPG dialogue, same box, same settings:
+
+| Model | Time | Throughput |
+|---|---|---|
+| Hy-MT2-7B Q4_K_M | **33.0 s** | **0.30 items/s** |
+| Rosetta-4B Q5_K_M | 39.7 s | 0.25 items/s |
+
+Fewer parameters did not win here — Rosetta only publishes 5-bit and IQ
+quants, and Q5_K_M moves more memory per token than Q4_K_M. It also dropped a
+control code that Hy-MT2 kept (`\SE[1]I'm Michiru.` → `Ben Michiru'yum.`,
+losing `\SE[1]`) and repeated a line; `preserve_placeholders: true` fixes the
+dropped code but lengthens every prompt. Its own card notes it is tuned for
+structured JSON/YAML/XML and that "performance on unstructured text may
+vary", which is what dialogue is. Keep it in mind for structured content, not
+for speed.
+
+The same held for low-bit quantisation of Hy-MT2 itself: `Q3_K_M` measured
+**60.1 s** against Q4_K_M's 33.0 s on that dialogue, nearly 2× slower.
+llama.cpp's CPU kernels are far better optimised for Q4_K than for the
+K-quants around it, so dropping bits is not a reliable speed lever here.
 
 ## Build notes
 

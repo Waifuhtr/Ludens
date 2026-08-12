@@ -13,15 +13,30 @@ MODEL_REPO = os.environ.get("MODEL_REPO", "tencent/Hy-MT2-7B-GGUF")
 MODEL_FILE = os.environ.get("MODEL_FILE", "Hy-MT2-7B-Q4_K_M.gguf")
 MODEL_DIR = os.environ.get("MODEL_DIR", "/app/models")
 
+# "rosetta" or "hy-mt2" - the two families use different instruction shapes,
+# and sending one model the other's prompt produces garbage. Inferred from the
+# repo name so switching MODEL_REPO alone stays safe; set PROMPT_FORMAT
+# explicitly to override.
+PROMPT_FORMAT = os.environ.get("PROMPT_FORMAT", "").strip().lower()
+if not PROMPT_FORMAT:
+    PROMPT_FORMAT = "rosetta" if "rosetta" in MODEL_REPO.lower() else "hy-mt2"
+
 LLAMA_SERVER_HOST = os.environ.get("LLAMA_SERVER_HOST", "127.0.0.1")
 LLAMA_SERVER_PORT = _int("LLAMA_SERVER_PORT", 8080)
 LLAMA_SERVER_URL = f"http://{LLAMA_SERVER_HOST}:{LLAMA_SERVER_PORT}"
 
-# Matches Hy-MT2 1.8B/7B recommended sampling params from the model card.
-TEMPERATURE = _float("TEMPERATURE", 0.7)
-TOP_P = _float("TOP_P", 0.6)
-TOP_K = _int("TOP_K", 20)
-REPEAT_PENALTY = _float("REPEAT_PENALTY", 1.05)
+# Sampling defaults per model family: Hy-MT2's model card prescribes
+# 0.7/0.6/20/1.05, while Rosetta is a Gemma 3 fine-tune whose card only
+# specifies temperature 0.7 - the rest stay at Gemma 3's own defaults.
+if PROMPT_FORMAT == "rosetta":
+    _TEMPERATURE, _TOP_P, _TOP_K, _REPEAT_PENALTY = 0.7, 0.95, 64, 1.0
+else:
+    _TEMPERATURE, _TOP_P, _TOP_K, _REPEAT_PENALTY = 0.7, 0.6, 20, 1.05
+
+TEMPERATURE = _float("TEMPERATURE", _TEMPERATURE)
+TOP_P = _float("TOP_P", _TOP_P)
+TOP_K = _int("TOP_K", _TOP_K)
+REPEAT_PENALTY = _float("REPEAT_PENALTY", _REPEAT_PENALTY)
 MAX_TOKENS = _int("MAX_TOKENS", 512)
 
 # --parallel value the llama-server was started with; also used to bound

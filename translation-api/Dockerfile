@@ -3,12 +3,14 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build llama-server from source.
 #
-# Why from source: tencent/Hy-MT2-7B-GGUF needs the "STQ1_0" ggml quant kernel
-# from https://github.com/ggml-org/llama.cpp/pull/22836, which is NOT merged
-# into llama.cpp master yet. A stock llama.cpp (or pip llama-cpp-python)
-# compiles fine but cannot load this GGUF. We clone master and cherry-pick the
-# 3 commits of that PR; the cherry-pick is skipped automatically once upstream
-# merges it (detected by grepping for GGML_TYPE_STQ1_0).
+# Why from source: the default model tencent/Hy-MT2-7B-GGUF needs the "STQ1_0"
+# ggml quant kernel from https://github.com/ggml-org/llama.cpp/pull/22836,
+# which is NOT merged into llama.cpp master yet. A stock llama.cpp (or pip
+# llama-cpp-python) compiles fine but cannot load this GGUF. We clone master
+# and cherry-pick the 3 commits of that PR; the cherry-pick is skipped
+# automatically once upstream merges it (detected by grepping for
+# GGML_TYPE_STQ1_0). The optional Rosetta model needs none of this - it is a
+# Gemma 3 fine-tune that stock llama.cpp already runs.
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS builder
 
@@ -87,7 +89,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY test-ui ./test-ui
-COPY entrypoint.sh .
+COPY entrypoint.sh chat-template-rosetta.jinja ./
 # --version is a real build-time smoke test: it fails the build if the binary
 # cannot start (e.g. a missing shared library), instead of letting the Space
 # deploy and only then crash on first request.
@@ -103,10 +105,6 @@ ENV MODEL_REPO=tencent/Hy-MT2-7B-GGUF \
     PARALLEL_SLOTS=8 \
     CTX_SIZE=16384 \
     MAX_TOKENS=512 \
-    TEMPERATURE=0.7 \
-    TOP_P=0.6 \
-    TOP_K=20 \
-    REPEAT_PENALTY=1.05 \
     MAX_BATCH_SIZE=200 \
     API_KEY="" \
     PORT=7860

@@ -109,3 +109,65 @@ def build_prompt(
         )
 
     return f"{instruction}\n\n{text}"
+
+
+def _build_rosetta_messages(
+    text: str,
+    target_lang: str,
+    source_lang: str | None,
+    style: str | None,
+    glossary: dict[str, str] | None,
+    preserve_placeholders: bool,
+) -> list[dict[str, str]]:
+    """YanoljaNEXT-Rosetta instruction block.
+
+    Its chat template maps the standard roles onto the model's own turn names:
+    the `system` message becomes <start_of_turn>instruction and the last `user`
+    message becomes <start_of_turn>source, so a plain OpenAI-shaped request
+    works as long as the directives live in `system` and *only* the text to
+    translate lives in `user`. Field names below (Tone:, Glossary:, the closing
+    "Provide the final translation..." line) follow the model card's example.
+    """
+    lines = [f"Translate the user's text to {resolve_language(target_lang)}."]
+
+    if source_lang:
+        lines.append(f"The source text is in {resolve_language(source_lang)}.")
+    if style:
+        lines.append(f"Tone: {style}")
+    if glossary:
+        lines.append("Glossary:")
+        lines.extend(f"- {src} -> {dst}" for src, dst in glossary.items())
+    if preserve_placeholders:
+        lines.append(
+            "Keep every placeholder, variable and control code exactly as it "
+            "appears; do not translate, escape or reorder them."
+        )
+
+    lines.append("Provide the final translation immediately without any other text.")
+
+    return [
+        {"role": "system", "content": "\n".join(lines)},
+        {"role": "user", "content": text},
+    ]
+
+
+def build_messages(
+    text: str,
+    target_lang: str,
+    source_lang: str | None = None,
+    style: str | None = None,
+    glossary: dict[str, str] | None = None,
+    preserve_placeholders: bool = False,
+    prompt_format: str = "rosetta",
+) -> list[dict[str, str]]:
+    """Chat messages for the configured model family. Hy-MT2 wants everything
+    in one user turn; Rosetta wants directives split into a system turn."""
+    if prompt_format == "rosetta":
+        return _build_rosetta_messages(
+            text, target_lang, source_lang, style, glossary, preserve_placeholders
+        )
+
+    prompt = build_prompt(
+        text, target_lang, source_lang, style, glossary, preserve_placeholders
+    )
+    return [{"role": "user", "content": prompt}]
