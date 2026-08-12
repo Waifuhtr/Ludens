@@ -1,0 +1,7 @@
+models/
+test-ui/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+README.md

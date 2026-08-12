@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hy-MT2 Translation API — Test Arayüzü</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Hy-MT2 Translation API <span class="badge">Test Arayüzü</span></h1>
+    <p class="sub">Tek istek ve toplu (batch) isteklerin yanıt sürelerini karşılaştırın.</p>
+  </header>
+
+  <section class="panel" id="config-panel">
+    <h2>Bağlantı Ayarları</h2>
+    <div class="grid">
+      <label>
+        API Base URL
+        <input type="text" id="apiBase" placeholder="https://your-space.hf.space" value="http://localhost:7860" />
+      </label>
+      <label>
+        API Key <span class="hint">(opsiyonel)</span>
+        <input type="text" id="apiKey" placeholder="X-API-Key" />
+      </label>
+      <label>
+        Hedef Dil
+        <select id="targetLang"></select>
+      </label>
+      <label>
+        Kaynak Dil <span class="hint">(opsiyonel)</span>
+        <select id="sourceLang">
+          <option value="">Otomatik algıla</option>
+        </select>
+      </label>
+    </div>
+    <div class="status-row">
+      <button id="checkHealth">Sağlık Kontrolü</button>
+      <span id="healthStatus" class="status-pill status-unknown">bilinmiyor</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Çevrilecek Metinler</h2>
+    <p class="hint">Her satır ayrı bir string olarak ele alınır (oyun string'lerini simüle eder).</p>
+    <textarea id="sourceText" rows="8">Hello!
+Welcome!
+Potion
+Attack
+You have obtained \V[1] gold.
+Are you sure you want to quit the game?
+The nearest inn is just north of here.
+Press %1 to open your inventory.</textarea>
+    <div class="actions">
+      <button id="btnSingle">Tek İstek (ilk satır)</button>
+      <button id="btnBatch" class="primary">Toplu İstek (tüm satırlar)</button>
+      <button id="btnBenchmark" class="accent">Karşılaştır: Sıralı vs Toplu</button>
+    </div>
+  </section>
+
+  <section class="panel" id="results-panel" hidden>
+    <h2>Sonuçlar</h2>
+    <div class="stats" id="statsRow"></div>
+    <div class="table-wrap">
+      <table id="resultsTable">
+        <thead><tr><th>Orijinal</th><th>Çeviri</th><th>Süre</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" id="benchmark-panel" hidden>
+    <h2>Sıralı vs Toplu Karşılaştırma</h2>
+    <div class="bench-bars" id="benchBars"></div>
+    <p id="benchSummary" class="hint"></p>
+  </section>
+
+  <section class="panel" id="log-panel">
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
