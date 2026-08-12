@@ -1,8 +1,10 @@
 import asyncio
 import time
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config, llama_client
@@ -16,6 +18,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serves test-ui/index.html at "/" so visiting the Space's URL shows the
+# benchmark page instead of a bare 404 - the API routes below are registered
+# first so this catch-all mount can't shadow them.
+_TEST_UI_DIR = Path(__file__).resolve().parent.parent / "test-ui"
 
 
 async def verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
@@ -140,6 +147,13 @@ async def translate_batch(req: BatchTranslateRequest):
         elapsed_seconds=round(elapsed, 4),
         items_per_second=round(len(req.texts) / elapsed, 2) if elapsed > 0 else None,
     )
+
+
+# Registered last so it can't shadow the API routes above: Starlette matches
+# routes in registration order, and a "/" mount would otherwise catch
+# everything not matched yet.
+if _TEST_UI_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=_TEST_UI_DIR, html=True), name="test-ui")
 
 
 @app.on_event("shutdown")

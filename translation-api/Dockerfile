@@ -86,6 +86,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY test-ui ./test-ui
 COPY entrypoint.sh .
 # --version is a real build-time smoke test: it fails the build if the binary
 # cannot start (e.g. a missing shared library), instead of letting the Space

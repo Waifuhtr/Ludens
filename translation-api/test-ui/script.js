@@ -254,6 +254,13 @@ $("btnSingle").addEventListener("click", translateSingle);
 $("btnBatch").addEventListener("click", () => translateBatch(false));
 $("btnBenchmark").addEventListener("click", runBenchmark);
 
+// Served by the Space itself over http(s) -> same origin is the API.
+// Opened as a local file:// (e.g. from the zip) -> keep the localhost default
+// for testing against `docker run -p 7860:7860`.
+if (location.protocol === "http:" || location.protocol === "https:") {
+  $("apiBase").value = location.origin;
+}
+
 populateLanguageSelects();
 fetchLanguagesFromApi();
 log("Arayüz hazır. Önce API Base URL'i ayarlayıp Sağlık Kontrolü yapın.");
