@@ -9,9 +9,27 @@ def _float(name: str, default: float) -> float:
     return float(os.environ.get(name, default))
 
 
-MODEL_REPO = os.environ.get("MODEL_REPO", "tencent/Hy-MT2-7B-GGUF")
-MODEL_FILE = os.environ.get("MODEL_FILE", "Hy-MT2-7B-Q4_K_M.gguf")
+MODEL_REPO = os.environ.get("MODEL_REPO", "tencent/Hy-MT2-1.8B-GGUF")
+MODEL_FILE = os.environ.get("MODEL_FILE", "Hy-MT2-1.8B-Q4_K_M.gguf")
 MODEL_DIR = os.environ.get("MODEL_DIR", "/app/models")
+
+# Optional JSON file of term -> translation applied to every request (only the
+# terms that occur in a given string are attached). This is what keeps
+# character names and game terms identical across a whole 50k-string run.
+GLOSSARY_FILE = os.environ.get("GLOSSARY_FILE", "")
+
+# Style applied when a request does not send its own. Measurably the strongest
+# lever for register consistency: without it the model drifts between the
+# formal and informal second person from one line to the next (Turkish
+# siz/sen), which reads as two different characters. Example value:
+#   "casual spoken Turkish, informal second person singular (sen)"
+DEFAULT_STYLE = os.environ.get("DEFAULT_STYLE", "")
+
+# Strings packed into a single generation by /translate/document. Bigger
+# groups amortise the instruction prompt further and give the model more
+# surrounding dialogue, but raise the cost of a group failing validation and
+# being retried one string at a time.
+GROUP_SIZE = _int("GROUP_SIZE", 10)
 
 # "rosetta" or "hy-mt2" - the two families use different instruction shapes,
 # and sending one model the other's prompt produces garbage. Inferred from the

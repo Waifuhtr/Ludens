@@ -3,6 +3,8 @@ on https://huggingface.co/tencent/Hy-MT2-7B-GGUF ("Default Translation",
 "Terminology", "Style" and "Structured Data" instruction variants).
 """
 
+import re
+
 # The 33 languages Hy-MT2 is documented to support, code -> English name.
 LANGUAGES = {
     "zh": "Chinese",
@@ -57,6 +59,41 @@ _PLACEHOLDER_CLAUSE = (
     "it appears, and must not translate, escape or reorder them"
 )
 
+# Added when several strings are translated in one generation. Phrased after
+# the model card's "Delimiters" template, which is the documented way to tell
+# Hy-MT2 that certain symbols are structure and must survive verbatim.
+_GROUP_CLAUSE = (
+    ". The text is a numbered list of separate segments. You must output the "
+    "same number of segments, each starting with its own unchanged marker, in "
+    "the same order, and must not merge, split, reorder or renumber them"
+)
+
+
+# Control codes and format specifiers that carry no translatable words:
+# RPG Maker escapes (\SE[1], \V[1], \n[1], \C[3], and bare \. \| \^ \> \<),
+# printf specifiers (%1, %s, %d) and template variables ({var}, ${var}).
+_CONTROL_CODE_RE = re.compile(
+    r"\\[A-Za-z]+\[[^\]]*\]"
+    r"|\\[A-Za-z]+"
+    r"|\\[.|^><!$]"
+    r"|%\d+|%[sdif]"
+    r"|\$\{[^}]*\}"
+    r"|\{\{[^}]*\}\}"
+    r"|\{[^}\s]*\}"
+)
+
+
+def is_translatable(text: str) -> bool:
+    """False for strings that are only control codes, numbers or punctuation.
+
+    Game files are full of these ("\\SE[1]\\n[1].", "%1", "---"). Sending them
+    to the model costs a full generation and invites invention: with a style
+    instruction attached, "\\SE[1]\\n[1]." came back as
+    "\\SE[1]\\n[1]. senin için" - words that were never in the source. Passing
+    them straight through is both safer and free.
+    """
+    return any(ch.isalpha() for ch in _CONTROL_CODE_RE.sub("", text))
+
 
 def resolve_language(code_or_name: str) -> str:
     """Map an ISO-ish code to its English name; pass through unknown values
@@ -71,6 +108,8 @@ def build_prompt(
     style: str | None = None,
     glossary: dict[str, str] | None = None,
     preserve_placeholders: bool = False,
+    context: str | None = None,
+    numbered_group: bool = False,
 ) -> str:
     """Build a single-turn prompt in one of the instruction shapes documented on
     the Hy-MT2 model card. Everything the model is meant to *follow* has to stay
@@ -99,6 +138,9 @@ def build_prompt(
     if preserve_placeholders:
         instruction += _PLACEHOLDER_CLAUSE
 
+    if numbered_group:
+        instruction += _GROUP_CLAUSE
+
     instruction += ":"
 
     if glossary:
@@ -106,6 +148,17 @@ def build_prompt(
         ref_lines = "\n".join(f"{k} translates to {v}" for k, v in glossary.items())
         instruction = (
             "Reference the following translations:\n" + ref_lines + "\n\n" + instruction
+        )
+
+    if context:
+        # "Structured Data 2" template from the model card: background first,
+        # then the task line, then the text. This is what disambiguates a bare
+        # line like "\SE[1]\n[1]?" that carries no clue on its own.
+        instruction = (
+            "[Background Information]\n"
+            + context.strip()
+            + "\n\n"
+            + instruction
         )
 
     return f"{instruction}\n\n{text}"
@@ -118,6 +171,8 @@ def _build_rosetta_messages(
     style: str | None,
     glossary: dict[str, str] | None,
     preserve_placeholders: bool,
+    context: str | None = None,
+    numbered_group: bool = False,
 ) -> list[dict[str, str]]:
     """YanoljaNEXT-Rosetta instruction block.
 
@@ -132,6 +187,8 @@ def _build_rosetta_messages(
 
     if source_lang:
         lines.append(f"The source text is in {resolve_language(source_lang)}.")
+    if context:
+        lines.append(f"Context: {context.strip()}")
     if style:
         lines.append(f"Tone: {style}")
     if glossary:
@@ -141,6 +198,12 @@ def _build_rosetta_messages(
         lines.append(
             "Keep every placeholder, variable and control code exactly as it "
             "appears; do not translate, escape or reorder them."
+        )
+    if numbered_group:
+        lines.append(
+            "The text is a numbered list of separate segments. Output the same "
+            "number of segments, each starting with its own unchanged marker, "
+            "in the same order; do not merge, split, reorder or renumber them."
         )
 
     lines.append("Provide the final translation immediately without any other text.")
@@ -159,15 +222,31 @@ def build_messages(
     glossary: dict[str, str] | None = None,
     preserve_placeholders: bool = False,
     prompt_format: str = "rosetta",
+    context: str | None = None,
+    numbered_group: bool = False,
 ) -> list[dict[str, str]]:
     """Chat messages for the configured model family. Hy-MT2 wants everything
     in one user turn; Rosetta wants directives split into a system turn."""
     if prompt_format == "rosetta":
         return _build_rosetta_messages(
-            text, target_lang, source_lang, style, glossary, preserve_placeholders
+            text,
+            target_lang,
+            source_lang,
+            style,
+            glossary,
+            preserve_placeholders,
+            context,
+            numbered_group,
         )
 
     prompt = build_prompt(
-        text, target_lang, source_lang, style, glossary, preserve_placeholders
+        text,
+        target_lang,
+        source_lang,
+        style,
+        glossary,
+        preserve_placeholders,
+        context,
+        numbered_group,
     )
     return [{"role": "user", "content": prompt}]

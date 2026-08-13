@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build llama-server from source.
 #
-# Why from source: the default model tencent/Hy-MT2-7B-GGUF needs the "STQ1_0"
+# Why from source: the Hy-MT2 GGUFs (default and 7B alike) need the "STQ1_0"
 # ggml quant kernel from https://github.com/ggml-org/llama.cpp/pull/22836,
 # which is NOT merged into llama.cpp master yet. A stock llama.cpp (or pip
 # llama-cpp-python) compiles fine but cannot load this GGUF. We clone master
@@ -96,8 +96,10 @@ COPY entrypoint.sh chat-template-rosetta.jinja ./
 RUN chmod +x /app/llama-server /app/entrypoint.sh \
     && /app/llama-server --version
 
-ENV MODEL_REPO=tencent/Hy-MT2-7B-GGUF \
-    MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf \
+ENV MODEL_REPO=tencent/Hy-MT2-1.8B-GGUF \
+    MODEL_FILE=Hy-MT2-1.8B-Q4_K_M.gguf \
+    GLOSSARY_FILE="" \
+    GROUP_SIZE=10 \
     MODEL_DIR=/app/models \
     LLAMA_SERVER_HOST=127.0.0.1 \
     LLAMA_SERVER_PORT=8080 \

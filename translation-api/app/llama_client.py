@@ -41,7 +41,9 @@ class LlamaServerError(RuntimeError):
     pass
 
 
-async def chat_complete(messages: list[dict[str, str]]) -> str:
+async def chat_complete(
+    messages: list[dict[str, str]], max_tokens: int | None = None
+) -> str:
     client = get_client()
     payload = {
         "messages": messages,
@@ -49,7 +51,7 @@ async def chat_complete(messages: list[dict[str, str]]) -> str:
         "top_p": config.TOP_P,
         "top_k": config.TOP_K,
         "repeat_penalty": config.REPEAT_PENALTY,
-        "max_tokens": config.MAX_TOKENS,
+        "max_tokens": max_tokens or config.MAX_TOKENS,
         "stream": False,
     }
     async with _semaphore:

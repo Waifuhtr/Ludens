@@ -11,9 +11,14 @@ license: apache-2.0
 
 # Hy-MT2 Translation API
 
-A batching-optimized translation API for [tencent/Hy-MT2-7B-GGUF](https://huggingface.co/tencent/Hy-MT2-7B-GGUF),
+A batching-optimized translation API for the
+[Hy-MT2](https://huggingface.co/collections/tencent/hy-mt2) GGUF models,
 built to run as a Hugging Face Space Docker app on an 8 vCPU / 32 GB RAM
-instance.
+instance. Defaults to **Hy-MT2-1.8B** for throughput; the 7B is one env var
+away. Beyond raw translation it carries the machinery a 50k-string game
+localisation actually needs — a project glossary, a pinned register, and
+passthrough for control-code-only lines. See
+[Keeping 50k strings consistent](#keeping-50k-strings-consistent).
 
 ## How it works
 
@@ -95,8 +100,24 @@ server-side safety cap on a single call.
 | `target_lang` | string | ISO code (`tr`, `en`, `ja`, ...) or full name |
 | `source_lang` | string, optional | omit to let the model auto-detect |
 | `style` | string, optional | e.g. `"casual, playful"` — injected as a style instruction |
-| `glossary` | object, optional | `{"HP": "Can Puanı"}` — forces specific term translations |
+| `glossary` | object, optional | `{"HP": "Can Puanı"}` — merged on top of the project glossary file (see `GLOSSARY_FILE`) |
+| `context` | string, optional | background about the scene, injected with the model card's "Background Information" template. Weak in practice — see [Verified behaviour](#verified-behaviour) |
 | `preserve_placeholders` | bool, default `false` | adds an explicit "keep placeholders verbatim" clause. **Leave it off**: Hy-MT2 already preserves `\V[1]`, `%1`, `{var}` etc. on its own (measured — see [Verified behaviour](#verified-behaviour)), so the clause only costs prompt tokens |
+
+### `POST /translate/document` — ordered lines of one scene
+Same fields as `/translate/batch`, plus `group_size`. Packs consecutive lines
+into one generation so the model sees the surrounding dialogue instead of
+each line alone. **Slower than `/translate/batch` (~25%) but more
+consistent** — use it for dialogue, not for bulk UI strings. Untranslatable
+lines are kept out of the group and copied through.
+
+```json
+{ "texts": ["...", "..."], "target_lang": "tr", "group_size": 10 }
+```
+The response adds `groups`, `group_size` and `regrouped_fallbacks`. A group
+whose markers come back wrong is silently re-run one line at a time, so lines
+can never end up shifted; a climbing `regrouped_fallbacks` means `group_size`
+is too large for the model in use.
 
 ### Auth
 Set the `API_KEY` env var on the Space to require an `X-API-Key` header on
@@ -106,8 +127,11 @@ Set the `API_KEY` env var on the Space to require an `X-API-Key` header on
 
 | var | default | meaning |
 |---|---|---|
-| `MODEL_REPO` | `tencent/Hy-MT2-7B-GGUF` | set to `tencent/Hy-MT2-1.8B-GGUF` (with a matching `MODEL_FILE`) to trade quality for a large throughput win on bulk jobs |
-| `MODEL_FILE` | `Hy-MT2-7B-Q4_K_M.gguf` | `HY-MT2-7B-Q6_K.gguf` / `HY-MT2-7B-Q8_0.gguf` for higher quality (both fit in 32 GB), or `Hy-MT2-1.8B-Q4_K_M.gguf` with the 1.8B repo |
+| `MODEL_REPO` | `tencent/Hy-MT2-1.8B-GGUF` | set to `tencent/Hy-MT2-7B-GGUF` (with a matching `MODEL_FILE`) to trade ~4x throughput for noticeably better prose |
+| `MODEL_FILE` | `Hy-MT2-1.8B-Q4_K_M.gguf` | `Hy-MT2-7B-Q4_K_M.gguf` with the 7B repo. Stay on `Q4_K_M`: lower-bit quants measured *slower* on CPU, see [Build notes](#build-notes) |
+| `DEFAULT_STYLE` | *(empty)* | style applied when a request sends none. **The single most effective quality setting** — see [Keeping 50k strings consistent](#keeping-50k-strings-consistent) |
+| `GLOSSARY_FILE` | *(empty)* | path to a JSON `{"term": "translation"}` file; only the terms occurring in a given string are attached to its prompt. See `glossary.example.json` |
+| `GROUP_SIZE` | `10` | strings packed into one generation by `/translate/document` |
 | `THREADS` | `8` | CPU threads for llama-server |
 | `PARALLEL_SLOTS` | `8` | concurrent generation slots (continuous batching) |
 | `CTX_SIZE` | `16384` | total context, split across `PARALLEL_SLOTS` slots |
@@ -125,9 +149,12 @@ Set the `API_KEY` env var on the Space to require an `X-API-Key` header on
 2. In the Space's **Settings → Hardware**, select a CPU tier with 8 vCPU /
    32 GB RAM (this needs to be set manually — it's a paid tier and isn't
    controlled by any file in this repo).
-3. First boot downloads the ~4.6 GB GGUF file, so the first request after a
-   cold start can take a few minutes; enable **persistent storage** in Space
-   settings to avoid re-downloading on every restart.
+3. First boot downloads the GGUF (~1.1 GB for the 1.8B default, ~4.6 GB for
+   the 7B), so the first request after a cold start is slow; enable
+   **persistent storage** in Space settings to avoid re-downloading on every
+   restart.
+4. Optional but recommended for a real localisation run: set `DEFAULT_STYLE`,
+   and mount a glossary JSON and point `GLOSSARY_FILE` at it.
 
 ## Local testing
 
@@ -163,10 +190,24 @@ Space, so treat these as a floor, not a target.
   **sequential 19.2 s vs. batch 12.2 s (1.58×)**. A 24-item batch of longer
   sentences ran at 0.34 items/s. Expect roughly double on 8 vCPU.
 
-Planning number: at ~0.7 items/s (8 vCPU, 7B, sentence-length strings)
-50,000 strings is on the order of a day of wall-clock time. If that matters
-more than the last few quality points, switch `MODEL_REPO`/`MODEL_FILE` to
-the 1.8B GGUF — same API, same prompts, several times faster.
+### 1.8B vs 7B, measured
+
+The default is now **1.8B**. Same 10-line dialogue scene, 4 cores:
+
+| model | time | throughput |
+|---|---|---|
+| Hy-MT2-7B Q4_K_M | 33.0 s | 0.30 items/s |
+| Hy-MT2-1.8B Q4_K_M | 10.9 s | 0.92 items/s |
+| Hy-MT2-1.8B Q4_K_M + passthrough + `DEFAULT_STYLE` | **7.9 s** | **1.27 items/s** |
+
+That is **~4x** end to end, which on 8 vCPU puts 50,000 sentence-length
+strings in the region of a few hours rather than a day.
+
+The cost is real: 1.8B makes mistakes 7B does not — it rendered *"Her round
+eyes…"* with English *Her* read as Turkish *her* ("every"), and turned a
+vocative *"…, Michiru?"* into an object *"Michiru'yu"*. Set
+`MODEL_REPO=tencent/Hy-MT2-7B-GGUF` and `MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf`
+for anything where prose quality outranks throughput.
 
 ### A note on `preserve_placeholders`
 
@@ -180,6 +221,66 @@ has to live inside the single instruction line of the model card's documented
 templates, never as its own paragraph in front of the source text. The flag
 now defaults to off and, when enabled, adds one short clause with no literal
 placeholder examples.
+
+## Keeping 50k strings consistent
+
+The failure mode on a big run is not a mistranslated word, it is the same
+character sounding like two different people across a scene. Each string is
+translated in isolation, so nothing carries register or terminology from one
+line to the next. Four levers were built and measured on the 1.8B model; they
+are listed in the order they are worth reaching for.
+
+**1. `DEFAULT_STYLE` — the strong one.** Turkish forces a T/V choice on every
+sentence and the model picks per line, so one line says *geç kaldın* and the
+next *geç kaldınız*. Pinning the register fixes it globally:
+
+```
+DEFAULT_STYLE=casual spoken Turkish, informal second person singular (sen), never the formal siz form
+```
+
+| line | without | with |
+|---|---|---|
+| `You're thirty minutes late.` | Otuz dakika geç **kaldınız** | Otuz dakika geç **kaldın** |
+| `You rest at the inn…` | geri **kazanırsınız** | **dinlen** ve … **tamamla** |
+
+**2. `GLOSSARY_FILE` — for names and terms.** A project-wide JSON dictionary;
+only terms occurring in a string are attached, so a 2000-entry glossary costs
+nothing on a line that uses none of it. Verified: `potion`→`iksir`,
+`HP`→`Can Puanı`, `inn`→`han` applied without the request sending any
+glossary. Treat it as a strong hint, not a guarantee — in testing the model
+kept `bar` instead of the requested `meyhane` on one line.
+
+**3. Untranslatable-line passthrough — free, always on.** Lines that are only
+control codes, numbers or punctuation (`\SE[1]\n[1].`, `%1`, `---`) never
+reach the model. This is a correctness fix as much as a speed one: with a
+style instruction attached, `\SE[1]\n[1].` came back as
+`\SE[1]\n[1]. senin için` — words invented out of nothing. Game files are
+full of such lines, and each one skipped is a whole generation saved.
+
+**4. `/translate/document` — better flow, ~25% slower.** Grouped translation
+did visibly fix register drift *before* `DEFAULT_STYLE` existed, and still
+smooths sentence flow across a scene. With levers 1-3 in place its remaining
+benefit is smaller, so it is opt-in.
+
+`context` was also implemented and measured, and is the weak one: supplying a
+scene description did not fix the formality drift and mostly changed word
+choice. It stays available for domain hints, but do not expect much.
+
+### Grouping did not turn out to be a speed win
+
+Amortising the instruction prompt across a group sounds like it should be
+faster. It is not, on CPU:
+
+| mode | 40 lines, 4 slots | throughput |
+|---|---|---|
+| `/translate/batch` (one request per line) | **33.8 s** | **1.19 items/s** |
+| `/translate/document`, `group_size=5` | 43.3 s | 0.92 items/s |
+| `/translate/document`, `group_size=10` | 49.7 s | 0.80 items/s |
+
+CPU inference is dominated by *decode*, not prompt prefill, and grouping does
+not reduce the number of tokens generated — it just serialises ten
+translations into one stream and gives up the parallelism of the other slots.
+Continuous batching across slots beats packing more into a single request.
 
 ## Switching model family
 
