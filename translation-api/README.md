@@ -13,33 +13,25 @@ license: apache-2.0
 
 A batching-optimized translation API for the
 [Hy-MT2](https://huggingface.co/collections/tencent/hy-mt2) GGUF models,
-built to run as a Hugging Face Space Docker app on an 8 vCPU / 32 GB RAM
-instance. Defaults to **Hy-MT2-1.8B** for throughput; the 7B is one env var
-away. Beyond raw translation it carries the machinery a 50k-string game
+built to run as a Hugging Face Space Docker app on a **GPU** instance
+(targets Nvidia T4, 16 GB VRAM). Defaults to **Hy-MT2-7B** — the 1.8B only
+existed to make CPU inference bearable and is one env var away if you want it
+back. Beyond raw translation it carries the machinery a 50k-string game
 localisation actually needs — a project glossary, a pinned register, and
 passthrough for control-code-only lines. See
 [Keeping 50k strings consistent](#keeping-50k-strings-consistent).
 
 ## How it works
 
-- **Inference engine**: `llama-server` (from [llama.cpp](https://github.com/ggml-org/llama.cpp)),
-  compiled from source in the Docker build. This GGUF depends on the
-  `STQ1_0` quant kernel from
-  [PR #22836](https://github.com/ggml-org/llama.cpp/pull/22836), which is
-  **not yet merged into llama.cpp `master`** (verified directly) — a plain
-  `pip install llama-cpp-python` or a vanilla clone of master will compile
-  but fail to load this GGUF at runtime. The `Dockerfile` clones master and
-  cherry-picks the 3 commits that make up that PR (verified to apply
-  cleanly, zero conflicts); it auto-skips the cherry-pick once upstream
-  merges it, so no edits are needed later.
-  The build is pinned to `-j2` (`BUILD_JOBS`) — see
-  [Build notes](#build-notes), this is what stopped the build from hanging.
-  It's started with `--threads 8 --parallel 8 --cont-batching`, which uses
-  llama.cpp's continuous batching to combine multiple in-flight requests'
-  forward passes into shared compute instead of running them one at a time.
-  This is the real mechanism behind the "batch instead of one-by-one"
-  optimization you asked for — the 8 cores get fed one bigger batched matmul
-  per step instead of 8 independent tiny ones.
+- **Inference engine**: `llama-server`, taken as-is from the official
+  prebuilt image `ghcr.io/ggml-org/llama.cpp:server-cuda-b10398`. Nothing is
+  compiled at build time — see [Build notes](#build-notes) for why the old
+  from-source build turned out to be unnecessary.
+  It runs with `--gpu-layers all --parallel 16 --cont-batching`, so every
+  layer sits in VRAM and llama.cpp's continuous batching merges the in-flight
+  requests into shared GPU work instead of serving them one at a time. This
+  is the mechanism behind translating in batches rather than string by
+  string, and unlike on CPU it genuinely scales with the slot count.
 - **Gateway**: a small FastAPI app (`app/main.py`) in front of it, which
   builds the Hy-MT2 instruction-format prompt (see `app/translation.py`) for
   each string and fans batch requests out concurrently to `llama-server`,
@@ -127,14 +119,15 @@ Set the `API_KEY` env var on the Space to require an `X-API-Key` header on
 
 | var | default | meaning |
 |---|---|---|
-| `MODEL_REPO` | `tencent/Hy-MT2-1.8B-GGUF` | set to `tencent/Hy-MT2-7B-GGUF` (with a matching `MODEL_FILE`) to trade ~4x throughput for noticeably better prose |
-| `MODEL_FILE` | `Hy-MT2-1.8B-Q4_K_M.gguf` | `Hy-MT2-7B-Q4_K_M.gguf` with the 7B repo. Stay on `Q4_K_M`: lower-bit quants measured *slower* on CPU, see [Build notes](#build-notes) |
+| `MODEL_REPO` | `tencent/Hy-MT2-7B-GGUF` | `tencent/Hy-MT2-1.8B-GGUF` (with a matching `MODEL_FILE`) is faster but noticeably weaker prose |
+| `MODEL_FILE` | `Hy-MT2-7B-Q4_K_M.gguf` | `HY-MT2-7B-Q6_K.gguf` / `HY-MT2-7B-Q8_0.gguf` also fit in 16 GB — see [VRAM budget](#vram-budget) |
+| `GPU_LAYERS` | `all` | passed to `--gpu-layers`. `all` keeps the whole model in VRAM; a number offloads only that many layers, `0` is CPU-only |
 | `DEFAULT_STYLE` | *(empty)* | style applied when a request sends none. **The single most effective quality setting** — see [Keeping 50k strings consistent](#keeping-50k-strings-consistent) |
 | `GLOSSARY_FILE` | *(empty)* | path to a JSON `{"term": "translation"}` file; only the terms occurring in a given string are attached to its prompt. See `glossary.example.json` |
 | `GROUP_SIZE` | `10` | strings packed into one generation by `/translate/document` |
-| `THREADS` | `8` | CPU threads for llama-server |
-| `PARALLEL_SLOTS` | `8` | concurrent generation slots (continuous batching) |
-| `CTX_SIZE` | `16384` | total context, split across `PARALLEL_SLOTS` slots |
+| `THREADS` | `4` | CPU threads; barely matters once every layer is on the GPU |
+| `PARALLEL_SLOTS` | `16` | concurrent generation slots (continuous batching) |
+| `CTX_SIZE` | `32768` | total context, split across `PARALLEL_SLOTS` slots (2048 each). Costs VRAM — see [VRAM budget](#vram-budget) |
 | `MAX_TOKENS` | `512` | max output tokens per translation |
 | `MAX_BATCH_SIZE` | `200` | max items accepted per `/translate/batch` call |
 | `PROMPT_FORMAT` | inferred | `hy-mt2` or `rosetta` — see [Switching model family](#switching-model-family). Inferred from `MODEL_REPO`, so you rarely set it by hand |
@@ -146,27 +139,57 @@ Set the `API_KEY` env var on the Space to require an `X-API-Key` header on
 1. On [huggingface.co/new-space](https://huggingface.co/new-space), choose
    **Docker** as the SDK, then push this folder's contents (or upload via
    the web UI / `huggingface_hub`).
-2. In the Space's **Settings → Hardware**, select a CPU tier with 8 vCPU /
-   32 GB RAM (this needs to be set manually — it's a paid tier and isn't
-   controlled by any file in this repo).
-3. First boot downloads the GGUF (~1.1 GB for the 1.8B default, ~4.6 GB for
-   the 7B), so the first request after a cold start is slow; enable
-   **persistent storage** in Space settings to avoid re-downloading on every
-   restart.
-4. Optional but recommended for a real localisation run: set `DEFAULT_STYLE`,
-   and mount a glossary JSON and point `GLOSSARY_FILE` at it.
+2. In the Space's **Settings → Hardware**, select a GPU tier — **T4 small**
+   (4 vCPU / 15 GB RAM / 16 GB VRAM) is what the defaults are sized for. This
+   has to be set by hand; no file in this repo controls it.
+3. **Enable persistent storage.** This matters more than anything else here:
+   the GGUF is downloaded at *runtime*, not baked into the image, so without
+   persistent storage every cold start re-downloads 4.6 GB **while the GPU
+   meter is running**. With it, the download happens once.
+4. **Set the sleep timer** (Settings → *Sleep time*). A GPU tier bills per
+   hour for as long as the Space is awake, idle or not.
+5. Recommended for a real localisation run: set `DEFAULT_STYLE`, and add a
+   glossary JSON with `GLOSSARY_FILE` pointing at it.
+
+First boot is slow twice over: the model download, then a one-off PTX JIT
+compile (llama.cpp ships `sm_75` as PTX, which the driver compiles and caches
+on first load). `/health` answers `{"status":"starting"}` throughout.
+
+### VRAM budget
+
+`hunyuan-dense` is 32 layers with 8 KV heads × 128 dims, i.e. **128 KB of KV
+cache per token**, so the context size is the knob that actually consumes
+VRAM:
+
+| `CTX_SIZE` | KV cache | + Q4_K_M (4.6 GB) | fits 16 GB? |
+|---|---|---|---|
+| 16384 | 2.0 GB | 6.6 GB | yes, lots spare |
+| **32768** (default) | **4.0 GB** | **8.6 GB** | **yes, comfortable** |
+| 65536 | 8.0 GB | 12.6 GB | yes, but tight |
+
+Swapping `MODEL_FILE` up a quant adds its size difference: Q6_K is 6.2 GB and
+Q8_0 is 8.0 GB, so both still fit alongside the default 32768 context. If
+llama-server dies at startup with a CUDA OOM, `CTX_SIZE` is the first thing to
+lower.
 
 ## Local testing
 
 ```bash
 docker build -t hy-mt2-api .
-docker run -p 7860:7860 --cpus 8 --memory 32g hy-mt2-api
+docker run --gpus all -p 7860:7860 hy-mt2-api
 ```
+
+Without `--gpus all` the container starts but finds no device. To try it on a
+machine with no GPU at all, add `-e GPU_LAYERS=0` — it will run on CPU, slowly.
 
 Then open `test-ui/index.html` in a browser, point it at
 `http://localhost:7860`, and use it to benchmark single vs. batch requests.
 
 ## Verified behaviour
+
+> **These numbers are from the CPU era** (4 cores, no GPU) and are kept as a
+> quality record, not a performance one. See
+> [Historical: CPU-era measurements](#historical-cpu-era-measurements).
 
 The stack below was actually run end to end against
 `Hy-MT2-7B-Q4_K_M.gguf` (real model, real llama-server built exactly as the
@@ -334,27 +357,63 @@ K-quants around it, so dropping bits is not a reliable speed lever here.
 
 ## Build notes
 
-The Docker build compiles llama.cpp, which is the slow part. Earlier builds
-**hung at 24% for 5+ hours and then died with no error message** — the giveaway
-was that they stopped at exactly the same source file every time. Cause:
-`-j$(nproc)` reads the *host's* core count on a Hugging Face build worker
-while the worker's memory ceiling is much lower, so dozens of concurrent g++
-processes thrash it into swap. Bounding it (`BUILD_JOBS=2`, plus
-`LLAMA_BUILD_UI=OFF` so the build stops fetching a UI tarball over the
-network) is the fix: the same target builds in **about 4 minutes at -j4** on a
-4-core machine.
+**The build no longer compiles anything.** It starts from the official
+prebuilt `ghcr.io/ggml-org/llama.cpp:server-cuda-b10398` and only adds Python
+and this repo's gateway on top, so a deploy is a pull plus a `pip install` —
+a couple of minutes, with nothing that can fail the way earlier builds did.
 
-This cost is paid once — Docker layer caching skips the whole compile on
-later deploys as long as you don't edit the `Dockerfile`. Editing only
-`app/` or `test-ui/` rebuilds in seconds.
+That is possible because the from-source build was never actually needed.
+Every previous revision cloned llama.cpp and cherry-picked the `STQ1_0` kernel
+from [PR #22836](https://github.com/ggml-org/llama.cpp/pull/22836), on the
+strength of the model card's warning that "this gguf depends on our STQ
+kernel". Reading the GGUF tensor tables directly disproves that for the quants
+used here — both files are 354 tensors of ordinary `Q4_K` / `Q6_K` / `F32`:
 
-Two other latent problems were fixed at the same time:
+| file | tensor types | STQ1_0 tensors |
+|---|---|---|
+| `Hy-MT2-7B-Q4_K_M.gguf` | Q4_K ×192, F32 ×129, Q6_K ×33 | **0** |
+| `Hy-MT2-1.8B-Q4_K_M.gguf` | Q4_K ×192, F32 ×129, Q6_K ×33 | **0** |
 
-- The old build produced a **shared** llama-server (`libllama.so`,
-  `libggml*.so`) but the runtime stage copied only the executable, so even a
-  successful build would have crashed at startup on a missing shared library.
-  The build is now static (`BUILD_SHARED_LIBS=OFF`), one file, and
-  `llama-server --version` runs as a build-time smoke test.
-- `--mlock` is deprecated in current llama.cpp (superseded by `--load-mode`),
-  so `entrypoint.sh` does not use it; the default mmap loading is right for a
-  4.6 GB model on 32 GB of RAM.
+The warning applies to the separate 2-bit / 1.25-bit repos. Stock llama.cpp
+has supported the `hunyuan-dense` architecture for a long time, so the whole
+apparatus — the cherry-pick, the bounded `-j2` parallelism, the git identity,
+the static linking — existed to support a compile that did not have to happen.
+Everything it was working around is gone with it:
+
+- Builds that **hung at 24% for 5+ hours and died with no error**, because
+  `-j$(nproc)` read the *host's* core count on a memory-capped build worker
+  and thrashed it into swap.
+- A build that failed on `git cherry-pick` with *"Committer identity
+  unknown"*, because a fresh container has no git config.
+- A build that failed on `COPY chat-template-rosetta.jinja` because that file
+  had not made it into a manually-synced Space. (The template is still written
+  inline in the `Dockerfile` for the same reason.)
+
+Layer caching still applies and now matters less: the expensive step is
+pulling the base image, and editing `app/` or `test-ui/` only rebuilds the
+final, instant layers because `requirements.txt` is copied and installed
+before the source.
+
+The image tag is pinned deliberately. `:server-cuda` would float, and a
+redeploy months from now could land on a llama.cpp that changed a CLI flag or
+a chat-template behaviour — both of which have already bitten this project
+once. Bump it consciously with `--build-arg LLAMA_CPP_IMAGE=...`.
+
+### Historical: CPU-era measurements
+
+Everything measured below and in [Verified behaviour](#verified-behaviour) was
+recorded on 4 CPU cores with no GPU, and several conclusions are artefacts of
+CPU inference being decode-bound rather than facts about the models:
+
+- `/translate/document` grouping was **~25% slower** than per-string batching,
+  because grouping trades away slot parallelism without reducing generated
+  tokens. On a GPU, where batching genuinely scales, this may well invert.
+- `Q3_K_M` measured nearly **2× slower** than `Q4_K_M` — llama.cpp's CPU
+  kernels are far better optimised for Q4_K. CUDA kernels have different
+  characteristics.
+- `PARALLEL_SLOTS=8` saturated 8 cores; the GPU default is 16 and could
+  probably go higher.
+
+Re-measure on the T4 before treating any of it as current. The
+`/translate/document` vs `/translate/batch` comparison in `test-ui` is the
+quickest way to redo it.

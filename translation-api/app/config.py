@@ -9,8 +9,12 @@ def _float(name: str, default: float) -> float:
     return float(os.environ.get(name, default))
 
 
-MODEL_REPO = os.environ.get("MODEL_REPO", "tencent/Hy-MT2-1.8B-GGUF")
-MODEL_FILE = os.environ.get("MODEL_FILE", "Hy-MT2-1.8B-Q4_K_M.gguf")
+# Back to 7B now that this runs on a T4: 1.8B only existed to make CPU
+# inference bearable, and it costs real accuracy. Q4_K_M (4.6 GB) plus the KV
+# cache below leaves most of the 16 GB free, so Q6_K or Q8_0 also fit if the
+# extra quality is worth the bandwidth - see the VRAM budget in the README.
+MODEL_REPO = os.environ.get("MODEL_REPO", "tencent/Hy-MT2-7B-GGUF")
+MODEL_FILE = os.environ.get("MODEL_FILE", "Hy-MT2-7B-Q4_K_M.gguf")
 MODEL_DIR = os.environ.get("MODEL_DIR", "/app/models")
 
 # Optional JSON file of term -> translation applied to every request (only the
@@ -59,8 +63,10 @@ MAX_TOKENS = _int("MAX_TOKENS", 512)
 
 # --parallel value the llama-server was started with; also used to bound
 # how many translation requests this gateway keeps in flight at once so
-# requests queue instead of overwhelming the server's slots.
-PARALLEL_SLOTS = _int("PARALLEL_SLOTS", 8)
+# requests queue instead of overwhelming the server's slots. Higher on GPU
+# than the 8 that suited CPU: continuous batching actually scales there,
+# where on CPU the cores were saturated long before the slots were.
+PARALLEL_SLOTS = _int("PARALLEL_SLOTS", 16)
 
 MAX_BATCH_SIZE = _int("MAX_BATCH_SIZE", 200)
 REQUEST_TIMEOUT_SECONDS = _float("REQUEST_TIMEOUT_SECONDS", 120.0)

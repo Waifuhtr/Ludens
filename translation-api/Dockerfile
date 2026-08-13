@@ -1,102 +1,55 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# Stage 1: build llama-server from source.
+# GPU image: the official prebuilt llama.cpp CUDA server plus this repo's
+# FastAPI gateway. Nothing is compiled here.
 #
-# Why from source: the Hy-MT2 GGUFs (default and 7B alike) need the "STQ1_0"
-# ggml quant kernel from https://github.com/ggml-org/llama.cpp/pull/22836,
-# which is NOT merged into llama.cpp master yet. A stock llama.cpp (or pip
-# llama-cpp-python) compiles fine but cannot load this GGUF. We clone master
-# and cherry-pick the 3 commits of that PR; the cherry-pick is skipped
-# automatically once upstream merges it (detected by grepping for
-# GGML_TYPE_STQ1_0). The optional Rosetta model needs none of this - it is a
-# Gemma 3 fine-tune that stock llama.cpp already runs.
+# Earlier revisions built llama.cpp from source and cherry-picked the "STQ1_0"
+# quant kernel from PR #22836, because the Hy-MT2 model card warns its GGUFs
+# depend on that kernel. Reading the actual tensor tables shows that is not
+# true for the quants this project uses: Hy-MT2-7B-Q4_K_M and
+# Hy-MT2-1.8B-Q4_K_M are both 354 tensors of plain Q4_K / Q6_K / F32 on the
+# `hunyuan-dense` architecture, all of which stock llama.cpp already supports.
+# (The STQ warning applies to the separate 2-bit / 1.25-bit repos.) Dropping
+# the source build removes 10-60 minutes of compiling per deploy and with it
+# every build failure this project has hit - OOM-thrashed builders, missing
+# git identity, a COPY of a file that wasn't in the context.
+#
+# The tag is pinned rather than floating on :server-cuda so a redeploy cannot
+# silently land on a different llama.cpp. b10398 postdates `hunyuan-dense`
+# support, and llama.cpp's default CUDA architecture list includes 75-virtual,
+# which covers the T4 (sm_75) this targets - as PTX, so the driver JIT-compiles
+# it once on first model load. Bump with:
+#   --build-arg LLAMA_CPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bNNNNN
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim AS builder
+ARG LLAMA_CPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-b10398
+FROM ${LLAMA_CPP_IMAGE}
 
-ARG LLAMA_CPP_REF=master
-
-# Bounded compile parallelism - this is what made earlier builds hang.
-# `-j$(nproc)` reads the *host's* core count on a Hugging Face build worker
-# (dozens of cores) while the worker's memory is capped far lower, so dozens
-# of concurrent g++ processes thrash it: the build froze at 24% for 5+ hours
-# and died with no error message. At -j2 peak memory stays around 3 GB and the
-# llama-server target finishes in roughly 10 minutes. Raise via
-# --build-arg BUILD_JOBS=4 only if you know the builder has RAM to spare.
-ARG BUILD_JOBS=2
-
+# The base image carries llama-server and its shared libraries in /app and
+# little else - notably no Python. Its own layer so it stays cached whatever
+# happens to the application below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git ca-certificates pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /build
-RUN git config --global user.email "build@hy-mt2-api.local" \
-    && git config --global user.name "hy-mt2-api Docker build" \
-    && git clone https://github.com/ggml-org/llama.cpp.git . \
-    && if [ "$LLAMA_CPP_REF" != "master" ]; then \
-         git fetch origin "$LLAMA_CPP_REF" && git checkout FETCH_HEAD; \
-       fi \
-    && if grep -q GGML_TYPE_STQ1_0 ggml/include/ggml.h; then \
-         echo "STQ1_0 kernel already present upstream, skipping cherry-pick"; \
-       else \
-         echo "STQ1_0 kernel missing, cherry-picking from PR #22836" \
-         && git fetch origin refs/pull/22836/head:stq-pr \
-         && git cherry-pick -x \
-              5503c4b816da60cafd3cfc275dd9f50f079e0cf4 \
-              5165daa88c2a36a663534d6cbefd6e13b3fe4623 \
-              1e411d8f5a1e23525fa3265dfb4bd76265465397; \
-       fi
-
-# BUILD_SHARED_LIBS=OFF produces one self-contained llama-server instead of a
-# binary plus libllama.so / libggml*.so - the runtime stage copies a single
-# file, so a shared build would have died at startup on a missing .so.
-# LLAMA_BUILD_UI=OFF skips the embedded web UI, which otherwise downloads a
-# tarball from huggingface.co during the build (it was already failing over to
-# a fallback URL in the logs) - the FastAPI gateway is the only frontend here.
-# GGML_NATIVE=OFF + GGML_AVX2=ON: the build worker's CPU is not the CPU the
-# Space runs on, so target a portable AVX2 baseline rather than -march=native.
-# Static libstdc++/libgcc so the binary does not depend on the builder image's
-# GCC runtime matching the (newer) runtime image's.
-RUN cmake -B build \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_SHARED_LIBS=OFF \
-      -DLLAMA_CURL=OFF \
-      -DLLAMA_BUILD_UI=OFF \
-      -DLLAMA_BUILD_TESTS=OFF \
-      -DLLAMA_BUILD_EXAMPLES=OFF \
-      -DGGML_NATIVE=OFF \
-      -DGGML_AVX2=ON \
-      -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
-    && cmake --build build --config Release -j"${BUILD_JOBS}" --target llama-server
-
-# ---------------------------------------------------------------------------
-# Stage 2: runtime image (FastAPI gateway + llama-server binary)
-# ---------------------------------------------------------------------------
-FROM python:3.11-slim
-
-# libgomp1 = OpenMP runtime, the only shared library the static llama-server
-# still needs beyond glibc. curl is used by entrypoint.sh's readiness probe.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 curl \
+      python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY --from=builder /build/build/bin/llama-server /app/llama-server
-
+# Dependencies before source, so editing app/ or test-ui/ rebuilds only the
+# last few (instant) layers instead of reinstalling everything.
+# --break-system-packages: the CUDA base is Ubuntu, whose system Python is
+# PEP 668 "externally managed"; llama.cpp's own images install the same way.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 COPY app ./app
 COPY test-ui ./test-ui
 COPY entrypoint.sh ./
 
-# Written inline rather than COPYed from chat-template-rosetta.jinja in the
-# repo (kept there too, as a readable reference) so the build can't fail with
-# "not found" just because that one extra file didn't make it into whatever
-# upload/sync produced the build context - which is exactly what happened
-# deploying this the first time. Content must stay identical to the repo
-# copy; see the comment there for why this template exists at all.
+# Written inline rather than COPYed so the build cannot fail with "not found"
+# just because this one extra file didn't make it into the build context -
+# which is exactly what broke a previous deploy. Must stay identical to
+# chat-template-rosetta.jinja in the repo; see the comment there for why the
+# template exists at all.
 RUN cat <<'CHAT_TEMPLATE' > /app/chat-template-rosetta.jinja
 {{- bos_token -}}
 {%- for m in messages -%}
@@ -114,27 +67,43 @@ RUN cat <<'CHAT_TEMPLATE' > /app/chat-template-rosetta.jinja
 {%- endif -%}
 CHAT_TEMPLATE
 
-# --version is a real build-time smoke test: it fails the build if the binary
-# cannot start (e.g. a missing shared library), instead of letting the Space
-# deploy and only then crash on first request.
-RUN chmod +x /app/llama-server /app/entrypoint.sh \
-    && /app/llama-server --version
+# Deliberately not `llama-server --version` as a smoke test any more: the
+# binary now comes from an image that is already known-good, while the build
+# worker has no GPU, so touching the CUDA backend at build time risks failing
+# a build that would have run fine.
+RUN chmod +x /app/entrypoint.sh && test -x /app/llama-server
 
-ENV MODEL_REPO=tencent/Hy-MT2-1.8B-GGUF \
-    MODEL_FILE=Hy-MT2-1.8B-Q4_K_M.gguf \
-    GLOSSARY_FILE="" \
-    GROUP_SIZE=10 \
+ENV MODEL_REPO=tencent/Hy-MT2-7B-GGUF \
+    MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf \
     MODEL_DIR=/app/models \
+    GLOSSARY_FILE="" \
+    DEFAULT_STYLE="" \
+    GROUP_SIZE=10 \
     LLAMA_SERVER_HOST=127.0.0.1 \
     LLAMA_SERVER_PORT=8080 \
-    THREADS=8 \
-    PARALLEL_SLOTS=8 \
-    CTX_SIZE=16384 \
+    GPU_LAYERS=all \
+    THREADS=4 \
+    PARALLEL_SLOTS=16 \
+    CTX_SIZE=32768 \
     MAX_TOKENS=512 \
     MAX_BATCH_SIZE=200 \
     API_KEY="" \
     PORT=7860
 
+# The base image sets LLAMA_ARG_HOST=0.0.0.0, which llama-server reads as a
+# fallback for --host. entrypoint.sh passes --host explicitly, but overriding
+# the variable too means the inference server stays loopback-only even if that
+# flag is ever dropped: only the gateway on $PORT should be reachable.
+ENV LLAMA_ARG_HOST=127.0.0.1
+
 EXPOSE 7860
 
-CMD ["./entrypoint.sh"]
+# The base image's ENTRYPOINT is /app/llama-server. Left in place, a CMD here
+# would be appended to it and Docker would run `llama-server ./entrypoint.sh`.
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# Long start period: a cold start downloads several GB of GGUF before the
+# gateway answers. /health returns 200 while the model is still loading, so
+# this only fails if the process is genuinely dead.
+HEALTHCHECK --start-period=15m --interval=1m --timeout=10s \
+    CMD curl -fsS http://localhost:7860/health || exit 1
