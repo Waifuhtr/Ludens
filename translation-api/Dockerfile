@@ -89,7 +89,31 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY test-ui ./test-ui
-COPY entrypoint.sh chat-template-rosetta.jinja ./
+COPY entrypoint.sh ./
+
+# Written inline rather than COPYed from chat-template-rosetta.jinja in the
+# repo (kept there too, as a readable reference) so the build can't fail with
+# "not found" just because that one extra file didn't make it into whatever
+# upload/sync produced the build context - which is exactly what happened
+# deploying this the first time. Content must stay identical to the repo
+# copy; see the comment there for why this template exists at all.
+RUN cat <<'CHAT_TEMPLATE' > /app/chat-template-rosetta.jinja
+{{- bos_token -}}
+{%- for m in messages -%}
+{%- if m['role'] == 'system' -%}
+{{- '<start_of_turn>instruction\n' -}}{{- m['content'] | trim -}}{{- '<end_of_turn>\n' -}}
+{%- endif -%}
+{%- endfor -%}
+{%- for m in messages -%}
+{%- if m['role'] == 'user' -%}
+{{- '<start_of_turn>source\n' -}}{{- m['content'] | trim -}}{{- '<end_of_turn>\n' -}}
+{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+{{- '<start_of_turn>translation\n' -}}
+{%- endif -%}
+CHAT_TEMPLATE
+
 # --version is a real build-time smoke test: it fails the build if the binary
 # cannot start (e.g. a missing shared library), instead of letting the Space
 # deploy and only then crash on first request.

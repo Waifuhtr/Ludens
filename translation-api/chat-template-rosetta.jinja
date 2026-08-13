@@ -2,6 +2,13 @@
   Chat template for yanolja/YanoljaNEXT-Rosetta-*, used only when
   PROMPT_FORMAT=rosetta.
 
+  Kept here as a readable reference. The Dockerfile does NOT copy this file -
+  it writes an identical copy to /app/chat-template-rosetta.jinja inline via
+  a RUN heredoc, so the image build never depends on this file being present
+  in whatever context produced it (a plain `git push` always has it; a manual
+  file-by-file upload to a Space is what missed it once already). If you
+  change the template, update both this file and the Dockerfile's copy.
+
   The template embedded in that GGUF cannot be used: it calls the Jinja
   `default` filter on an object, which llama.cpp's minja engine does not
   implement, so `llama-server --jinja` aborts at startup with
