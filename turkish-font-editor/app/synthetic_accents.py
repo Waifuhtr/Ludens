@@ -23,20 +23,54 @@ def _circle(cx: float, cy: float, rx: float, ry: float, n: int = 16) -> Contour:
     return pts
 
 
-def _cedilla_hook(width: float, height: float) -> Contour:
-    # Basit bir virgül/kanca şekli; sol üstten başlar sağa iner, sola kıvrılır.
-    steps = 14
-    pts: list[Point] = []
-    # gövde (kalın kısım) - küçük bir dörtgen üstte
-    stem_w = width * 0.55
-    pts += [(0, height * 0.55), (stem_w, height * 0.55), (stem_w, height * 0.85), (0, height * 0.85)]
-    # kanca kuyruğu - üst sağdan aşağı sola bir yay
-    cx, cy = width * 0.15, height * 0.15
-    r = width * 0.42
-    for i in range(steps + 1):
-        a = math.radians(10 + i * (230 / steps))
-        pts.append((cx + r * math.cos(a), cy + r * math.sin(a) * 0.7 - height * 0.1))
+def _chaikin(points: list[Point], iterations: int = 3) -> list[Point]:
+    """Köşeli bir çizgiyi (uç noktalar sabit kalacak şekilde) yumuşak bir
+    eğriye yaklaştırır - basit ve kendi kendini kesme riski olmayan bir
+    düzleştirme yöntemi."""
+    pts = points
+    for _ in range(iterations):
+        smoothed = [pts[0]]
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            smoothed.append((0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1))
+            smoothed.append((0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1))
+        smoothed.append(pts[-1])
+        pts = smoothed
     return pts
+
+
+def _stroke_polygon(centerline: list[Point], width_start: float, width_end: float) -> Contour:
+    """Bir merkez çizgiyi, uca doğru inceltilmiş (tapered) tek bir kapalı
+    poligona (dış kenar + ters yönde iç kenar) dönüştürür."""
+    n = len(centerline)
+    outer: list[Point] = []
+    inner: list[Point] = []
+    for i, (x, y) in enumerate(centerline):
+        if i == 0:
+            dx, dy = centerline[1][0] - x, centerline[1][1] - y
+        elif i == n - 1:
+            dx, dy = x - centerline[i - 1][0], y - centerline[i - 1][1]
+        else:
+            dx = centerline[i + 1][0] - centerline[i - 1][0]
+            dy = centerline[i + 1][1] - centerline[i - 1][1]
+        length = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / length, dx / length
+        half = (width_start * (1 - i / (n - 1)) + width_end * (i / (n - 1))) / 2
+        outer.append((x + nx * half, y + ny * half))
+        inner.append((x - nx * half, y - ny * half))
+    return outer + list(reversed(inner))
+
+
+def _cedilla_hook(width: float, height: float) -> Contour:
+    # Harfin altına tutunan, aşağı ve sola kıvrılan, ucu incelen tek parça bir kanca.
+    key_points = [
+        (width * 0.58, height * 1.00),  # üstte harfe tutunma noktası
+        (width * 0.68, height * 0.70),  # sağa doğru omuz
+        (width * 0.50, height * 0.38),  # merkeze doğru iniş
+        (width * 0.24, height * 0.14),  # sola kıvrılma
+        (width * 0.16, height * 0.00),  # incelen uç
+    ]
+    centerline = _chaikin(key_points, iterations=3)
+    return _stroke_polygon(centerline, width_start=height * 0.30, width_end=height * 0.045)
 
 
 def _breve_arc(width: float, height: float) -> Contour:
