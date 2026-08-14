@@ -21,6 +21,9 @@ localisation actually needs — a project glossary, a pinned register, and
 passthrough for control-code-only lines. See
 [Keeping 50k strings consistent](#keeping-50k-strings-consistent).
 
+Point it at a zipped RPG Maker MV/MZ `data` folder and it translates the game
+end to end: see [Translating an RPG Maker game](#translating-an-rpg-maker-game).
+
 ## How it works
 
 - **Inference engine**: `llama-server`, taken as-is from the official
@@ -40,7 +43,85 @@ passthrough for control-code-only lines. See
 - Chat formatting uses the GGUF's embedded Jinja chat template
   (`llama-server --jinja`), matching the model card's documented usage.
 
-## Endpoints
+## Translating an RPG Maker game
+
+Upload the game's data folder as a zip and the whole extract → translate →
+repack cycle runs server-side. Open `/rpgm.html` on the Space for the UI, or
+drive it over the API:
+
+```bash
+BASE=https://your-space.hf.space
+ID=$(curl -sF file=@data.zip $BASE/project/upload | jq -r .id)
+curl -s -X POST $BASE/project/$ID/start -H 'Content-Type: application/json' \
+     -d '{"target_lang":"tr"}'
+curl -s $BASE/project/$ID/status | jq '.percent, .files'
+curl -so translated.zip $BASE/project/$ID/download
+```
+
+Zip the `data` folder (MZ) or `www/data` (MV) — not the whole game. Both
+layouts are detected automatically.
+
+### What gets translated
+
+Only dialogue, and deliberately so. RPG Maker keeps executable script, plugin
+bindings, asset filenames and engine identifiers in the same arrays as the
+lines an actor speaks, and translating one of those breaks the game rather
+than mistranslating it.
+
+| event code | content | translated |
+|---|---|---|
+| 401 / 405 | Show Text / Scrolling Text | **yes** |
+| 102 / 402 | Show Choices / When[choice] | **yes** |
+| 101 | message header, incl. the MZ speaker name | no |
+| 355 / 655 | Script (executable JS) | no |
+| 356 / 357 | Plugin Command | no |
+| 320 / 324 / 325 | Change Name / Nickname / Profile | no |
+
+Database files (`Actors.json`, `Items.json`, …), `System.json` terms and
+`plugins.js` are left untouched.
+
+Three details make the output safe to ship:
+
+- **Message boxes stay whole.** A run of consecutive 401 commands is one box
+  split across lines, not separate sentences, so the run is merged and
+  translated as a single piece — then re-wrapped into exactly the original
+  number of lines. Adding or removing entries in an event list would shift
+  every index after it and break conditional branches, so the line count is
+  an invariant.
+- **Repeats are translated once.** Units are keyed by source text across the
+  whole project: in a real game an 800-slot map set collapses to ~150 unique
+  strings, and a "Yes" that appears 300 times costs one generation. It also
+  keeps a 102 choice and its 402 mirror automatically identical.
+- **A mangled control code is never written.** After each translation the
+  multiset of control codes (`\C[2]`, `\N[1]`, `\V[3]`, `\I[5]`,
+  `<WordWrap>`, …) is compared against the source. On a mismatch the source
+  line is kept and the string is listed under *review* in the UI — a leftover
+  English line is cosmetic, a broken `\C[2` is a rendering bug in the
+  shipped game.
+
+Untranslated strings keep their source text, so the download is a playable
+game at any point, not just when the run finishes.
+
+### Project endpoints
+
+| method | path | purpose |
+|---|---|---|
+| `POST` | `/project/upload` | multipart zip; unpacks, detects MV/MZ, indexes dialogue |
+| `POST` | `/project/{id}/start` | begin (or resume) translating; body `{"target_lang":"tr"}` |
+| `GET` | `/project/{id}/status` | overall %, per-file %, review list |
+| `POST` | `/project/{id}/cancel` | stop after in-flight strings finish |
+| `GET` | `/project/{id}/download` | rebuilt zip, same folder layout |
+| `DELETE` | `/project/{id}` | remove immediately |
+| `GET` | `/project` | list projects and which one holds the GPU |
+
+One run at a time — there is a single GPU, so a second concurrent project
+would only make both finish later. Progress is written to disk continuously
+and a run interrupted by the Space sleeping is **resumed on startup**, which
+is why `PROJECT_DIR` defaults to the persistent volume (`/data/projects`)
+when one is mounted. Uploads are deleted after `PROJECT_RETENTION_HOURS`
+(default 24).
+
+## Translation endpoints
 
 ### `GET /health`
 Backend status check.
@@ -130,6 +211,9 @@ Set the `API_KEY` env var on the Space to require an `X-API-Key` header on
 | `CTX_SIZE` | `32768` | total context, split across `PARALLEL_SLOTS` slots (2048 each). Costs VRAM — see [VRAM budget](#vram-budget) |
 | `MAX_TOKENS` | `512` | max output tokens per translation |
 | `MAX_BATCH_SIZE` | `200` | max items accepted per `/translate/batch` call |
+| `PROJECT_DIR` | `/data/projects` if mounted, else `/app/projects` | where uploaded RPG Maker projects and their progress live |
+| `PROJECT_RETENTION_HOURS` | `24` | uploaded projects are deleted this long after their last update |
+| `MAX_UPLOAD_MB` | `200` | rejects uploads bigger than this |
 | `PROMPT_FORMAT` | inferred | `hy-mt2` or `rosetta` — see [Switching model family](#switching-model-family). Inferred from `MODEL_REPO`, so you rarely set it by hand |
 | `TEMPERATURE`/`TOP_P`/`TOP_K`/`REPEAT_PENALTY` | per family | `0.7`/`0.6`/`20`/`1.05` for Hy-MT2 (its model card's values), `0.7`/`0.95`/`64`/`1.0` for Rosetta (Gemma 3 defaults) |
 | `API_KEY` | *(empty)* | optional shared secret for `X-API-Key` |

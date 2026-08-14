@@ -43,6 +43,24 @@ PROMPT_FORMAT = os.environ.get("PROMPT_FORMAT", "").strip().lower()
 if not PROMPT_FORMAT:
     PROMPT_FORMAT = "rosetta" if "rosetta" in MODEL_REPO.lower() else "hy-mt2"
 
+# Where uploaded RPG Maker projects live. Prefers the Space's persistent
+# volume when one is mounted: a job that survives a restart is the difference
+# between resuming a half-finished game and re-translating it on GPU time.
+_DEFAULT_PROJECT_DIR = (
+    "/data/projects"
+    if os.path.isdir("/data") and os.access("/data", os.W_OK)
+    else "/app/projects"
+)
+PROJECT_DIR = os.environ.get("PROJECT_DIR", _DEFAULT_PROJECT_DIR)
+
+# Uploaded projects are deleted this many hours after their last update, so a
+# few full games do not quietly fill the disk.
+PROJECT_RETENTION_HOURS = _int("PROJECT_RETENTION_HOURS", 24)
+
+# Hard cap on an uploaded zip. A www/data folder is a few MB even for a long
+# game; anything far past that is a whole packaged game, not the data folder.
+MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 200)
+
 LLAMA_SERVER_HOST = os.environ.get("LLAMA_SERVER_HOST", "127.0.0.1")
 LLAMA_SERVER_PORT = _int("LLAMA_SERVER_PORT", 8080)
 LLAMA_SERVER_URL = f"http://{LLAMA_SERVER_HOST}:{LLAMA_SERVER_PORT}"

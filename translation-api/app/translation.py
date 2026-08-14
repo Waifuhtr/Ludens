@@ -69,18 +69,37 @@ _GROUP_CLAUSE = (
 )
 
 
-# Control codes and format specifiers that carry no translatable words:
-# RPG Maker escapes (\SE[1], \V[1], \n[1], \C[3], and bare \. \| \^ \> \<),
-# printf specifiers (%1, %s, %d) and template variables ({var}, ${var}).
+# Control codes and format specifiers that carry no translatable words.
+# Covers the RPG Maker MV/MZ escape set - bracketed codes (\N[1] actor name,
+# \V[1] variable, \C[3] colour, \I[5] icon, \P[1] party member, \FS[24] font
+# size, \PX[8]/\PY[8] positioning, \f[Actor1] face, \SE[1]), the bare escapes
+# (\G currency, \FB/\FI bold-italic, \. \| \! \^ \> \< \$ \\ \{ \}), the
+# message-window markup tags plugins add (<WordWrap>, <center>, ...), plus
+# printf specifiers (%1, %s) and template variables ({var}, ${var}).
+#
+# Ordering matters: the bracketed form has to be tried before the bare-letter
+# form, otherwise "\C[2]" would match as "\C" and leave a stray "[2]" behind.
 _CONTROL_CODE_RE = re.compile(
-    r"\\[A-Za-z]+\[[^\]]*\]"
+    r"\\[A-Za-z]{1,4}\[[^\]]*\]"
     r"|\\[A-Za-z]+"
-    r"|\\[.|^><!$]"
+    r"|\\[.|^><!$\\{}]"
+    r"|<(?:WordWrap|wordwrap|clear|indent|left|center|right)>"
+    r"|\[\[[^\[\]]*\]\]"
     r"|%\d+|%[sdif]"
     r"|\$\{[^}]*\}"
     r"|\{\{[^}]*\}\}"
     r"|\{[^}\s]*\}"
 )
+
+
+def control_codes(text: str) -> list[str]:
+    """Every control code in `text`, in order.
+
+    Used to verify a translation kept the codes the source had: RPG Maker will
+    happily render a corrupted "\\C[2" or silently lose a "\\N[1]", and a
+    dropped code is the difference between a working line and a broken one.
+    """
+    return _CONTROL_CODE_RE.findall(text)
 
 
 def is_translatable(text: str) -> bool:

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RPG Maker Çeviri</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>RPG Maker Çeviri <span class="badge">MV / MZ</span></h1>
+    <p class="sub">
+      Oyunun <code>data</code> (MZ) veya <code>www/data</code> (MV) klasörünü zip olarak yükleyin;
+      diyaloglar otomatik çıkarılır, çevrilir ve aynı yapıda geri paketlenir.
+      <a href="index.html">→ Hız testi arayüzü</a>
+    </p>
+  </header>
+
+  <section class="panel">
+    <h2>1 · Proje Yükle</h2>
+    <div class="grid">
+      <label>
+        API Base URL
+        <input type="text" id="apiBase" value="http://localhost:7860" />
+      </label>
+      <label>
+        API Key <span class="hint">(opsiyonel)</span>
+        <input type="text" id="apiKey" placeholder="X-API-Key" />
+      </label>
+      <label>
+        Hedef Dil
+        <select id="targetLang"></select>
+      </label>
+    </div>
+
+    <div id="dropZone" class="dropzone">
+      <input type="file" id="fileInput" accept=".zip" hidden />
+      <strong>Zip dosyasını buraya sürükleyin</strong>
+      <span class="hint">veya tıklayıp seçin — yalnızca data klasörü, tüm oyun değil</span>
+    </div>
+
+    <div class="actions">
+      <button id="btnUpload" class="primary" disabled>Yükle ve Analiz Et</button>
+      <span id="uploadInfo" class="hint"></span>
+    </div>
+  </section>
+
+  <section class="panel" id="projectPanel" hidden>
+    <h2>2 · Çeviri</h2>
+    <div class="stats" id="projectStats"></div>
+    <div class="actions">
+      <button id="btnStart" class="accent">Çeviriyi Başlat</button>
+      <button id="btnCancel" hidden>Durdur</button>
+      <button id="btnDownload">Çeviriyi İndir</button>
+      <button id="btnDelete">Projeyi Sil</button>
+    </div>
+
+    <div class="progress-block">
+      <div class="progress-head">
+        <span>Genel İlerleme</span>
+        <span id="overallPct">0%</span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="overallBar"></div></div>
+      <p class="hint" id="overallNote"></p>
+    </div>
+
+    <h3 class="subhead">Dosya Bazında</h3>
+    <div id="fileList" class="file-list"></div>
+  </section>
+
+  <section class="panel" id="reviewPanel" hidden>
+    <h2>Gözden Geçirilmesi Gerekenler</h2>
+    <p class="hint">
+      Çevirisi kontrol kodlarını (<code>\C[2]</code>, <code>\N[1]</code> gibi) koruyamadığı için
+      <strong>oyuna yazılmayan</strong> satırlar — bunlar kaynak dilde bırakıldı, oyun bozulmaz.
+    </p>
+    <div class="table-wrap">
+      <table id="reviewTable">
+        <thead><tr><th>Kaynak</th><th>Yazılan</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</div>
+<script src="rpgm.js"></script>
+</body>
+</html>

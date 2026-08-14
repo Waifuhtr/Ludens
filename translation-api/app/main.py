@@ -2,12 +2,14 @@ import asyncio
 import time
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config, glossary as glossary_store, grouping, llama_client
+from .rpgmaker import jobs as rpg_jobs, store as rpg_store
 from .translation import LANGUAGES, build_messages, is_translatable
 
 app = FastAPI(title="Translation API", version="2.0.0")
@@ -294,11 +296,161 @@ async def translate_document(req: DocumentTranslateRequest):
     )
 
 
+# ---------------------------------------------------------------------------
+# RPG Maker MV/MZ projects
+# ---------------------------------------------------------------------------
+
+
+def _status_payload(meta: dict) -> dict:
+    total = meta.get("total_units", 0) or 0
+    done = meta.get("translated_units", 0) or 0
+    files = [
+        {
+            "file": name,
+            "total": stats["total"],
+            "done": stats["done"],
+            "percent": round(100 * stats["done"] / stats["total"], 1)
+            if stats["total"]
+            else 100.0,
+        }
+        for name, stats in sorted(meta.get("files", {}).items())
+    ]
+    return {
+        "id": meta["id"],
+        "name": meta.get("name"),
+        "engine": meta.get("engine"),
+        "status": meta.get("status"),
+        "target_lang": meta.get("target_lang"),
+        "total_units": total,
+        "total_slots": meta.get("total_slots", 0),
+        "translated_units": done,
+        "percent": round(100 * done / total, 1) if total else 0.0,
+        "review_count": meta.get("review_count", 0),
+        "review_samples": meta.get("review_samples", []),
+        "unreadable_files": meta.get("unreadable_files", []),
+        "running": rpg_jobs.active_project_id() == meta["id"],
+        "files": files,
+        "error": meta.get("error"),
+    }
+
+
+def _require_project(project_id: str) -> dict:
+    meta = rpg_store.load_meta(project_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Unknown project")
+    return meta
+
+
+@app.post("/project/upload", dependencies=[Depends(verify_api_key)])
+async def upload_project(file: UploadFile = File(...)):
+    """Accept a zipped RPG Maker data folder and index its dialogue."""
+    rpg_store.purge_expired()
+    payload = await file.read()
+    try:
+        meta = await asyncio.to_thread(
+            rpg_store.create, payload, file.filename or "project.zip"
+        )
+    except rpg_store.UploadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _status_payload(meta)
+
+
+@app.get("/project", dependencies=[Depends(verify_api_key)])
+async def list_projects():
+    return {
+        "projects": [_status_payload(m) for m in rpg_store.list_projects()],
+        "running": rpg_jobs.active_project_id(),
+        "retention_hours": config.PROJECT_RETENTION_HOURS,
+    }
+
+
+@app.get("/project/{project_id}/status", dependencies=[Depends(verify_api_key)])
+async def project_status(project_id: str):
+    return _status_payload(_require_project(project_id))
+
+
+class StartTranslationRequest(BaseModel):
+    target_lang: str = "tr"
+
+
+@app.post("/project/{project_id}/start", dependencies=[Depends(verify_api_key)])
+async def start_project(project_id: str, req: StartTranslationRequest):
+    meta = _require_project(project_id)
+    if not await llama_client.health():
+        raise HTTPException(
+            status_code=503,
+            detail="The model is still loading. Try again in a moment.",
+        )
+    try:
+        await rpg_jobs.start(project_id, req.target_lang)
+    except RuntimeError as exc:
+        # One GPU, one job: say which project is holding it.
+        raise HTTPException(
+            status_code=409,
+            detail=f"{exc} (project {rpg_jobs.active_project_id()})",
+        ) from exc
+    meta["status"] = rpg_store.STATUS_TRANSLATING
+    meta["target_lang"] = req.target_lang
+    return _status_payload(meta)
+
+
+@app.post("/project/{project_id}/cancel", dependencies=[Depends(verify_api_key)])
+async def cancel_project(project_id: str):
+    _require_project(project_id)
+    if rpg_jobs.active_project_id() != project_id:
+        raise HTTPException(status_code=409, detail="That project is not running")
+    rpg_jobs.cancel()
+    return {"cancelling": True}
+
+
+@app.get("/project/{project_id}/download", dependencies=[Depends(verify_api_key)])
+async def download_project(project_id: str):
+    """Rebuild the data folder with whatever is translated so far.
+
+    Deliberately available before the run finishes: untranslated strings keep
+    their source text, so a partial download is always a playable game rather
+    than a broken one.
+    """
+    meta = _require_project(project_id)
+    output = await asyncio.to_thread(rpg_store.build_output, project_id, meta)
+    stem = Path(meta.get("name") or project_id).stem
+    return FileResponse(
+        output,
+        media_type="application/zip",
+        filename=f"{stem}-{meta.get('target_lang') or 'translated'}.zip",
+    )
+
+
+@app.delete("/project/{project_id}", dependencies=[Depends(verify_api_key)])
+async def delete_project(project_id: str):
+    if rpg_jobs.active_project_id() == project_id:
+        rpg_jobs.cancel()
+    if not rpg_store.delete(project_id):
+        raise HTTPException(status_code=404, detail="Unknown project")
+    return {"deleted": project_id}
+
+
 @app.on_event("startup")
 async def load_glossary():
     count = glossary_store.load(config.GLOSSARY_FILE)
     if config.GLOSSARY_FILE:
         print(f"[startup] glossary: {count} terms from {config.GLOSSARY_FILE}")
+
+
+@app.on_event("startup")
+async def resume_translation_jobs():
+    """Pick up a run the last shutdown interrupted, and drop stale uploads.
+
+    The Space sleeps; without this a project that was 90% translated would sit
+    at 90% forever and have to be restarted by hand.
+    """
+    removed = rpg_store.purge_expired()
+    if removed:
+        print(f"[startup] purged {len(removed)} expired project(s)")
+    await rpg_jobs.resume_pending()
+    resumed = rpg_jobs.active_project_id()
+    if resumed:
+        print(f"[startup] resumed translation of project {resumed}")
 
 
 # Registered last so it can't shadow the API routes above: Starlette matches
