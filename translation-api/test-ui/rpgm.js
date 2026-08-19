@@ -120,7 +120,7 @@ function render(st) {
     stat(st.total_units, "Benzersiz Metin"),
     stat(st.total_slots, "Toplam Konum"),
     stat(STATUS_TR[st.status] || st.status, "Durum"),
-    stat(st.review_count || 0, "İncelenecek"),
+    stat(st.failed_units || 0, "Hata"),
   ].join("");
 
   $("overallBar").style.width = st.percent + "%";
@@ -142,17 +142,7 @@ function render(st) {
     ? "Kaldığı Yerden Devam Et" : "Çeviriyi Başlat";
   $("btnCancel").hidden = !running;
 
-  const samples = st.review_samples || [];
-  $("reviewPanel").hidden = samples.length === 0;
-  document.querySelector("#reviewTable tbody").innerHTML = samples
-    .map((s) => `<tr><td>${escapeHtml(s.source)}</td><td>${escapeHtml(s.translation)}</td></tr>`)
-    .join("");
-
   if (running) startPolling(); else stopPolling();
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
 // ------------------------------------------------------------------ polling
@@ -173,7 +163,7 @@ async function refresh() {
     render(st);
     if (wasRunning && !(st.running || st.status === "translating")) {
       log(`Çeviri ${STATUS_TR[st.status] || st.status}. ${st.translated_units}/${st.total_units} metin.` +
-          (st.review_count ? ` ${st.review_count} satır incelenmeli.` : ""));
+          (st.failed_units ? ` ${st.failed_units} satırda model hatası oldu, kaynak korundu.` : ""));
     }
   } catch (e) {
     log("Durum alınamadı: " + e.message);
@@ -239,7 +229,6 @@ $("btnDelete").addEventListener("click", async () => {
     stopPolling();
     projectId = null;
     $("projectPanel").hidden = true;
-    $("reviewPanel").hidden = true;
   } catch (e) {
     log("Silinemedi: " + e.message);
   }

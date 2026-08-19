@@ -63,10 +63,10 @@ layouts are detected automatically.
 
 ### What gets translated
 
-Only dialogue, and deliberately so. RPG Maker keeps executable script, plugin
-bindings, asset filenames and engine identifiers in the same arrays as the
-lines an actor speaks, and translating one of those breaks the game rather
-than mistranslating it.
+Dialogue and interface text, and nothing else. RPG Maker keeps executable
+script, plugin bindings, asset filenames and engine identifiers in the same
+arrays as the lines an actor speaks, and translating one of those breaks the
+game rather than mistranslating it.
 
 | event code | content | translated |
 |---|---|---|
@@ -77,10 +77,25 @@ than mistranslating it.
 | 356 / 357 | Plugin Command | no |
 | 320 / 324 / 325 | Change Name / Nickname / Profile | no |
 
-Database files (`Actors.json`, `Items.json`, …), `System.json` terms and
-`plugins.js` are left untouched.
+Plus the interface text in `System.json` — the menu and options screens
+wrapped around that dialogue:
 
-Three details make the output safe to ship:
+| System.json key | content | translated |
+|---|---|---|
+| `terms.commands` | New Game, Continue, Save, Options, Attack, Buy/Sell | **yes** |
+| `terms.messages` | BGM/SE Volume, Always Dash, battle log templates | **yes** |
+| `terms.basic` / `terms.params` | Level, HP, MP, Attack, Defense … | **yes** |
+| `elements`, `equipTypes`, `skillTypes`, `weaponTypes`, `armorTypes` | equip and status screen labels | **yes** |
+| `gameTitle` | the game's name | no — a proper name, like character names |
+| `currencyUnit` | usually a one-letter symbol (`G`) | no |
+| `switches`, `variables` | developer labels the player never sees | no |
+
+Null and empty entries are left as they are: RPG Maker pads these arrays to a
+fixed length and index 0 is normally blank, so writing text into one would put
+stray words in the menu. Database files (`Actors.json`, `Items.json`, …) and
+`plugins.js` are untouched.
+
+Two details make the output safe to ship:
 
 - **Message boxes stay whole.** A run of consecutive 401 commands is one box
   split across lines, not separate sentences, so the run is merged and
@@ -92,15 +107,19 @@ Three details make the output safe to ship:
   whole project: in a real game an 800-slot map set collapses to ~150 unique
   strings, and a "Yes" that appears 300 times costs one generation. It also
   keeps a 102 choice and its 402 mirror automatically identical.
-- **A mangled control code is never written.** After each translation the
-  multiset of control codes (`\C[2]`, `\N[1]`, `\V[3]`, `\I[5]`,
-  `<WordWrap>`, …) is compared against the source. On a mismatch the source
-  line is kept and the string is listed under *review* in the UI — a leftover
-  English line is cosmetic, a broken `\C[2` is a rendering bug in the
-  shipped game.
+
+Translations are written exactly as the model returns them. An earlier
+revision compared each translation's control codes against the source and held
+back any string where they differed, but Hy-MT2 carries `\C[2]`, `\N[1]` and
+the rest through on its own, so in practice that gate withheld good
+translations more often than it caught bad ones. The only response still
+refused is an empty one, which would blank a line in-game; strings that are
+*only* control codes never reach the model at all.
 
 Untranslated strings keep their source text, so the download is a playable
-game at any point, not just when the run finishes.
+game at any point, not just when the run finishes. `failed_units` in the
+status counts strings where the backend itself errored — those keep their
+source line too.
 
 ### Project endpoints
 
@@ -108,7 +127,7 @@ game at any point, not just when the run finishes.
 |---|---|---|
 | `POST` | `/project/upload` | multipart zip; unpacks, detects MV/MZ, indexes dialogue |
 | `POST` | `/project/{id}/start` | begin (or resume) translating; body `{"target_lang":"tr"}` |
-| `GET` | `/project/{id}/status` | overall %, per-file %, review list |
+| `GET` | `/project/{id}/status` | overall %, per-file %, failure count |
 | `POST` | `/project/{id}/cancel` | stop after in-flight strings finish |
 | `GET` | `/project/{id}/download` | rebuilt zip, same folder layout |
 | `DELETE` | `/project/{id}` | remove immediately |

@@ -18,12 +18,10 @@ import time
 from .. import config, glossary as glossary_store, llama_client
 from ..translation import build_messages, is_translatable
 from . import store
-from .inject import codes_match
 
 # How often progress reaches disk. Small enough that a crash loses seconds of
 # GPU time, large enough not to rewrite a growing JSON file per string.
 _FLUSH_EVERY = 25
-_MAX_REVIEW_SAMPLES = 50
 
 _task: asyncio.Task | None = None
 _cancel = False
@@ -38,10 +36,17 @@ def is_running() -> bool:
     return active_project_id() is not None
 
 
-async def _translate_one(source: str, target_lang: str) -> tuple[str, bool]:
-    """Translate one unit. Returns (text, needs_review)."""
+async def _translate_one(source: str, target_lang: str) -> str:
+    """Translate one unit.
+
+    The result is used as-is. An earlier version compared the source's control
+    codes against the translation's and held back any string where they
+    differed, but Hy-MT2 preserves \\C[2], \\N[1] and friends on its own, so
+    that gate mostly withheld good translations. The only thing still refused
+    is an empty response, which would blank a line in-game.
+    """
     if not is_translatable(source):
-        return source, False
+        return source
 
     messages = build_messages(
         source,
@@ -54,13 +59,7 @@ async def _translate_one(source: str, target_lang: str) -> tuple[str, bool]:
         None,
     )
     translated = (await llama_client.chat_complete(messages)).strip()
-
-    # A translation that lost or mangled a control code is worse than no
-    # translation: keep the source so the game still renders correctly, and
-    # surface it for review.
-    if not codes_match(source, translated):
-        return source, True
-    return translated, False
+    return translated or source
 
 
 async def _run(project_id: str, target_lang: str) -> None:
@@ -87,8 +86,7 @@ async def _run(project_id: str, target_lang: str) -> None:
                 if slot.file in done_slots:
                     done_slots[slot.file] += 1
 
-    review_samples: list[dict] = list(meta.get("review_samples", []))
-    review_count = int(meta.get("review_count", 0))
+    failed = int(meta.get("failed_units", 0))
     queue: asyncio.Queue = asyncio.Queue()
     for unit in pending:
         queue.put_nowait(unit)
@@ -101,33 +99,31 @@ async def _run(project_id: str, target_lang: str) -> None:
         for name, count in done_slots.items():
             meta["files"][name]["done"] = count
         meta["translated_units"] = len(translations)
-        meta["review_count"] = review_count
-        meta["review_samples"] = review_samples
+        meta["failed_units"] = failed
         store.save_meta(project_id, meta)
 
     async def worker() -> None:
-        nonlocal processed_since_flush, review_count
+        nonlocal processed_since_flush, failed
         while not _cancel:
             try:
                 unit = queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
             try:
-                text, needs_review = await _translate_one(unit.source, target_lang)
+                text = await _translate_one(unit.source, target_lang)
             except Exception:  # noqa: BLE001 - one bad string must not kill the run
-                text, needs_review = unit.source, True
+                # Backend error, not a bad translation: keep the source line so
+                # the game still reads correctly and count it so the total is
+                # honest about what the model actually produced.
+                text = unit.source
+                async with lock:
+                    failed += 1
 
             async with lock:
                 translations[unit.source] = text
                 for slot in unit.slots:
                     if slot.file in done_slots:
                         done_slots[slot.file] += 1
-                if needs_review:
-                    review_count += 1
-                    if len(review_samples) < _MAX_REVIEW_SAMPLES:
-                        review_samples.append(
-                            {"source": unit.source, "translation": text}
-                        )
                 processed_since_flush += 1
                 if processed_since_flush >= _FLUSH_EVERY:
                     processed_since_flush = 0

@@ -3,15 +3,15 @@
 Deliberately narrow. RPG Maker stores executable script, plugin bindings,
 asset filenames and engine identifiers in the same JSON arrays as dialogue,
 and translating any of those breaks the game rather than mistranslating it -
-so this reads exactly two things:
+so this reads exactly three things:
 
   401 / 405  Show Text / Show Scrolling Text  - the dialogue itself
   102 / 402  Show Choices / When[choice]      - the buttons under that dialogue
+  System.json terms                           - the menus wrapped around both
 
 Everything else is left alone, including the database files (item and skill
-names), System.json terms, the MZ speaker-name field on 101, name-change
-commands (320/324/325), plugin commands (356/357) and Script blocks
-(355/655).
+names), the MZ speaker-name field on 101, name-change commands (320/324/325),
+plugin commands (356/357) and Script blocks (355/655).
 
 Consecutive 401 commands are one message box split across lines, not separate
 sentences, so a run of them is merged into a single unit and translated as one
@@ -33,6 +33,26 @@ CODE_WHEN_CHOICE = 402   # When [choice] (parameters[1] repeats the label)
 
 # Files that never contain event lists; skipped before parsing.
 _SKIP_FILES = {"Tilesets.json", "Animations.json", "MapInfos.json"}
+
+# System.json keys holding player-visible interface text.
+#
+# `terms` is the menu and options screen: `commands` is New Game / Continue /
+# Save / Options, `messages` is the options labels (BGM Volume, Always Dash)
+# and the battle log templates, `basic` and `params` are the stat labels.
+# The type arrays are shown in the equip and status screens.
+#
+# Excluded on purpose: `gameTitle` (a proper name, like the character names
+# this tool already leaves alone), `currencyUnit` (usually a one-letter symbol
+# such as "G" that reads as noise to a translator), and `switches` /
+# `variables`, which are developer-facing labels the player never sees.
+_SYSTEM_TERM_LISTS = ("basic", "commands", "params")
+_SYSTEM_TYPE_LISTS = (
+    "armorTypes",
+    "elements",
+    "equipTypes",
+    "skillTypes",
+    "weaponTypes",
+)
 
 
 @dataclass
@@ -136,6 +156,39 @@ def _walk_pages(container: dict, base_path: list, file_name: str, sink) -> None:
             )
 
 
+def _extract_system(data: dict, sink) -> None:
+    """Read the player-visible strings out of System.json.
+
+    Entries are frequently null or "" (RPG Maker pads these arrays to a fixed
+    length and index 0 is usually blank), so every value is checked before it
+    is emitted - writing a translation into a slot the engine expects to be
+    empty would put stray text in the menu.
+    """
+    name = "System.json"
+
+    terms = data.get("terms")
+    if isinstance(terms, dict):
+        for key in _SYSTEM_TERM_LISTS:
+            values = terms.get(key)
+            if isinstance(values, list):
+                for index, value in enumerate(values):
+                    if isinstance(value, str) and value.strip():
+                        sink(value, Slot(file=name, paths=[["terms", key, index]]))
+
+        messages = terms.get("messages")
+        if isinstance(messages, dict):
+            for key, value in messages.items():
+                if isinstance(value, str) and value.strip():
+                    sink(value, Slot(file=name, paths=[["terms", "messages", key]]))
+
+    for key in _SYSTEM_TYPE_LISTS:
+        values = data.get(key)
+        if isinstance(values, list):
+            for index, value in enumerate(values):
+                if isinstance(value, str) and value.strip():
+                    sink(value, Slot(file=name, paths=[[key, index]]))
+
+
 def _extract_file(name: str, data, sink) -> None:
     if name.startswith("Map") and isinstance(data, dict):
         # Map001.json ... events[] -> pages[] -> list[]
@@ -156,6 +209,9 @@ def _extract_file(name: str, data, sink) -> None:
         for troop_index, troop in enumerate(data):
             if isinstance(troop, dict):
                 _walk_pages(troop, [troop_index], name, sink)
+
+    elif name == "System.json" and isinstance(data, dict):
+        _extract_system(data, sink)
 
 
 def detect_data_root(root: Path) -> tuple[Path, str] | None:

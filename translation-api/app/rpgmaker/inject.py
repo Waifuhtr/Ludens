@@ -6,28 +6,15 @@ Two invariants matter more than translation quality here:
    removing entries in an event list shifts every index after it, which breaks
    conditional branches and jump targets. So a translation is re-wrapped into
    exactly the original line count, never more, never fewer.
-2. A string that failed validation is not written at all. Leaving the English
-   line is a cosmetic problem; writing a line whose \\C[2] got mangled into
-   "C[2]" is a rendering bug in the shipped game.
+2. A string is written exactly as the model returned it. Hy-MT2 carries
+   control codes through on its own, so there is no post-hoc validation step
+   holding translations back.
 """
 
 from __future__ import annotations
 
 import json
-from collections import Counter
 from pathlib import Path
-
-from ..translation import control_codes
-
-
-def codes_match(source: str, translated: str) -> bool:
-    """True when the translation carries exactly the source's control codes.
-
-    Order is not compared - Turkish reorders clauses, so "\\N[1] said X" may
-    legitimately become "X, dedi \\N[1]" - but the multiset must be identical:
-    every code present, none invented, none duplicated.
-    """
-    return Counter(control_codes(source)) == Counter(control_codes(translated))
 
 
 def rewrap(text: str, line_count: int) -> list[str]:

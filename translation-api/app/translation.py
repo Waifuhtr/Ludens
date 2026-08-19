@@ -92,16 +92,6 @@ _CONTROL_CODE_RE = re.compile(
 )
 
 
-def control_codes(text: str) -> list[str]:
-    """Every control code in `text`, in order.
-
-    Used to verify a translation kept the codes the source had: RPG Maker will
-    happily render a corrupted "\\C[2" or silently lose a "\\N[1]", and a
-    dropped code is the difference between a working line and a broken one.
-    """
-    return _CONTROL_CODE_RE.findall(text)
-
-
 def is_translatable(text: str) -> bool:
     """False for strings that are only control codes, numbers or punctuation.
 
