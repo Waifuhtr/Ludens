@@ -1,0 +1,270 @@
+TRANSLATION API - REFERENCE
+============================
+Base URL: your Hugging Face Space's root URL (e.g. https://<user>-<space>.hf.space)
+Version: 2.0.0 (FastAPI app title/version)
+
+AUTHENTICATION
+---------------
+If the API_KEY environment variable is set on the server, every endpoint below
+marked (auth) requires the header:
+
+  X-API-Key: <your key>
+
+If API_KEY is empty/unset (default), no auth header is required.
+Missing/invalid key -> 401 { "detail": "Invalid or missing X-API-Key header" }
+
+CONTENT TYPE
+------------
+All POST bodies are JSON (application/json), except /project/upload which is
+multipart/form-data. All responses are JSON except /project/{id}/download
+(binary zip).
+
+
+================================================================================
+GENERAL
+================================================================================
+
+GET /health
+  No auth required.
+  Returns backend/server status.
+  200 response:
+  {
+    "status": "ok" | "starting",
+    "llama_server": true | false,
+    "parallel_slots": <int>,
+    "model_file": "<string>",
+    "prompt_format": "hy-mt2" | "rosetta",
+    "glossary_terms": <int>,
+    "group_size": <int>,
+    "default_style": "<string>" | null
+  }
+
+GET /languages
+  No auth required.
+  Returns the supported language map as { "<code>": "<English name>" }.
+  Codes: zh, zh-hant, yue, en, fr, pt, es, ja, tr, ru, ar, ko, th, it, de, vi,
+         ms, id, tl, hi, pl, cs, nl, km, my, fa, gu, ur, te, mr, he, bn, ta,
+         uk, bo, kk, mn, ug
+
+
+================================================================================
+SINGLE / BATCH / DOCUMENT TRANSLATION
+================================================================================
+
+POST /translate  (auth)
+  Translate one string.
+  Request body:
+  {
+    "text": "<string>",                 // required
+    "target_lang": "<code>",            // required, e.g. "tr"
+    "source_lang": "<code>" | null,     // optional, auto-detect if omitted
+    "style": "<string>" | null,         // optional, overrides DEFAULT_STYLE
+    "glossary": { "term": "translation" } | null,  // optional, merged with server glossary
+    "preserve_placeholders": false,     // optional, default false (see note below)
+    "context": "<string>" | null        // optional, extra context sent to the model
+  }
+  200 response:
+  {
+    "translation": "<string>",
+    "elapsed_seconds": <float>
+  }
+  Notes:
+  - If the text has no translatable content (pure control codes / placeholders /
+    whitespace), it is returned unchanged with elapsed_seconds = 0.0 and no
+    model call is made.
+  - On backend failure -> 502 { "detail": "<error message>" }.
+
+POST /translate/batch  (auth)
+  Translate many independent strings in parallel (order preserved, no shared
+  context between them - use /translate/document for connected dialogue).
+  Request body:
+  {
+    "texts": ["<string>", ...],         // required, min 1 item
+    "target_lang": "<code>",            // required
+    "source_lang": "<code>" | null,
+    "style": "<string>" | null,
+    "glossary": { "term": "translation" } | null,
+    "preserve_placeholders": false,
+    "context": "<string>" | null
+  }
+  Limit: len(texts) must be <= MAX_BATCH_SIZE (default 200), otherwise 400.
+  200 response:
+  {
+    "translations": [
+      { "original": "<string>", "translation": "<string>" | null, "error": "<string>" | null },
+      ...
+    ],
+    "count": <int>,
+    "elapsed_seconds": <float>,
+    "items_per_second": <float> | null
+  }
+  Notes:
+  - Each item is translated independently and concurrently.
+  - A per-item failure sets "translation": null and "error": "<message>" for
+    that item only; the rest of the batch still succeeds.
+  - Untranslatable strings (control-codes-only, empty) are copied through
+    unchanged with no model call, same as /translate.
+
+POST /translate/document  (auth)
+  Translate an ordered list of lines from one scene/file. Lines are packed
+  into groups so the model can see surrounding dialogue, improving consistency
+  versus translating each line in isolation.
+  Request body:
+  {
+    "texts": ["<string>", ...],         // required, min 1 item, ordered
+    "target_lang": "<code>",            // required
+    "source_lang": "<code>" | null,
+    "style": "<string>" | null,
+    "glossary": { "term": "translation" } | null,
+    "preserve_placeholders": false,
+    "context": "<string>" | null,
+    "group_size": <int> | null          // optional, default = server GROUP_SIZE (10)
+  }
+  Limits: len(texts) <= MAX_BATCH_SIZE (400 if exceeded); group_size must be >= 1
+  (400 if not).
+  200 response (extends the batch response):
+  {
+    "translations": [ { "original": ..., "translation": ..., "error": ... }, ... ],
+    "count": <int>,
+    "elapsed_seconds": <float>,
+    "items_per_second": <float> | null,
+    "groups": <int>,
+    "group_size": <int>,
+    "regrouped_fallbacks": <int>
+  }
+  Notes:
+  - Lines are chunked into groups of group_size; each group is translated in
+    one generation using numbered markers so line order/count survives.
+  - If a group's output cannot be safely decoded (wrong count/markers), that
+    group is automatically retried one string at a time. regrouped_fallbacks
+    counts how many groups needed this fallback - a number that keeps growing
+    means group_size is too large for the model and should be lowered.
+  - Control-code-only lines inside a group are copied through and excluded
+    from the numbered list (they cost the model nothing and add no risk).
+
+Placeholder/control-code handling (applies to all three endpoints above):
+  The model (Hy-MT2) reliably preserves control codes, placeholders and
+  variables (\V[1], %1, {var}, etc.) on its own. "preserve_placeholders" is an
+  optional extra instruction clause and is OFF by default; there is no
+  separate validation step that blocks or flags a translation - whatever the
+  model returns is what you get back.
+
+
+================================================================================
+RPG MAKER MV/MZ PROJECT TRANSLATION
+================================================================================
+Workflow: upload a zipped project -> start a translation job -> poll status ->
+download the (partially or fully) translated project back as a zip.
+
+Supported project layouts, detected automatically:
+  - MV: www/data/*.json
+  - MZ: data/*.json  (no www wrapper)
+
+What gets extracted and translated:
+  - Map*.json, CommonEvents.json, Troops.json: in-game dialogue only
+    (Show Text / Scrolling Text bodies, Show Choices options).
+  - System.json: menu/interface terms (terms.basic, terms.commands,
+    terms.params, terms.messages, and the equip/skill/weapon/armor/element
+    type-name arrays). gameTitle, currencyUnit, switches and variables are
+    left untouched.
+  - NOT translated (out of scope): Script/plugin commands, Plugin Command
+    calls, Change Name/Nickname/Profile commands, the MZ speaker-name field,
+    actor names/nicknames, and none of the database files (Items, Weapons,
+    Armors, Skills, Enemies, States, Actors, Classes) are read yet.
+  - Identical source strings are deduplicated and translated once, however
+    many times they appear in the project, to save GPU time.
+  - One project may be translating at a time (single GPU) - starting a second
+    job while one is running returns 409.
+  - A job is restart-safe: progress is saved to disk and automatically
+    resumed if the server restarts mid-run.
+  - Uploaded projects are auto-deleted PROJECT_RETENTION_HOURS after their
+    last update (default 24h).
+
+POST /project/upload  (auth)
+  multipart/form-data with a single field "file": a zip of the project's
+  data folder (or a folder containing www/data or data somewhere inside it).
+  Max upload size: MAX_UPLOAD_MB (default 200 MB) -> 400 if exceeded or if no
+  RPG Maker data folder is found / zip is invalid (zip-slip protected).
+  200 response: project status object (see "Project status object" below).
+
+GET /project  (auth)
+  Lists all known projects.
+  200 response:
+  {
+    "projects": [ <project status object>, ... ],
+    "running": "<project_id>" | null,
+    "retention_hours": <int>
+  }
+
+GET /project/{project_id}/status  (auth)
+  200 response: <project status object>
+  404 if project_id is unknown.
+
+POST /project/{project_id}/start  (auth)
+  Request body:
+  { "target_lang": "<code>" }     // default "tr" if omitted
+  Starts (or resumes) translation for this project.
+  200 response: <project status object>
+  Errors:
+    404 unknown project
+    503 { "detail": "The model is still loading. Try again in a moment." }
+    409 { "detail": "<reason> (project <id currently running>)" } - another
+        project is already translating (single GPU slot).
+
+POST /project/{project_id}/cancel  (auth)
+  Cancels the currently running job for this project.
+  200 response: { "cancelling": true }
+  409 if this project is not the one currently running.
+  404 if project_id is unknown.
+
+GET /project/{project_id}/download  (auth)
+  Rebuilds and returns the project's data folder as a zip, using whatever is
+  translated so far. Available at any time, including mid-run: untranslated
+  strings keep their original source text, so the download is always a
+  playable game, never a broken one.
+  Response: binary zip, Content-Type: application/zip,
+  filename "<project-name>-<target_lang>.zip" (or "...-translated.zip" if no
+  target_lang is set yet).
+  404 if project_id is unknown.
+
+DELETE /project/{project_id}  (auth)
+  Cancels the job if it is running, then deletes the project and its files.
+  200 response: { "deleted": "<project_id>" }
+  404 if project_id is unknown.
+
+Project status object (returned by upload/list/status/start):
+  {
+    "id": "<project_id>",
+    "name": "<original filename>",
+    "engine": "mv" | "mz",
+    "status": "uploaded" | "translating" | "done" | "cancelled" | "error" | ...,
+    "target_lang": "<code>" | null,
+    "total_units": <int>,          // unique source strings
+    "total_slots": <int>,          // total places those strings are written back to
+    "translated_units": <int>,
+    "percent": <float>,            // translated_units / total_units * 100
+    "failed_units": <int>,         // units that errored during translation (backend errors only)
+    "unreadable_files": ["<filename>", ...],  // files that couldn't be parsed
+    "running": true | false,       // whether this project is the one currently on the GPU
+    "files": [
+      { "file": "<filename>", "total": <int>, "done": <int>, "percent": <float> },
+      ...
+    ],
+    "error": "<string>" | null
+  }
+
+
+================================================================================
+ERROR RESPONSE SHAPE
+================================================================================
+All error responses follow FastAPI's default shape:
+  { "detail": "<message>" }        (or a validation-error array for malformed
+                                     request bodies, e.g. missing required field)
+
+Common status codes:
+  400  bad request (bad zip, batch/document too large, invalid group_size)
+  401  missing/invalid X-API-Key
+  404  unknown project_id
+  409  conflict (another project already translating / cancel on non-running project)
+  502  the llama.cpp backend failed to respond
+  503  model still loading (only on /project/{id}/start)
