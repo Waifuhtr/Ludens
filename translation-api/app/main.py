@@ -1,5 +1,6 @@
 import asyncio
 import time
+import uuid
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
@@ -8,8 +9,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, glossary as glossary_store, grouping, llama_client
-from .rpgmaker import jobs as rpg_jobs, store as rpg_store
+from . import config, glossary as glossary_store, grouping, jobs, llama_client
+from .renpy import store as renpy_store
+from .rpgmaker import store as rpg_store
 from .translation import LANGUAGES, build_messages, is_translatable
 
 app = FastAPI(title="Translation API", version="2.0.0")
@@ -297,7 +299,10 @@ async def translate_document(req: DocumentTranslateRequest):
 
 
 # ---------------------------------------------------------------------------
-# RPG Maker MV/MZ projects
+# Game projects: RPG Maker MV/MZ under /project, Ren'Py under /renpy
+#
+# Both engines share one status shape and one job runner, because they share
+# the one GPU underneath.
 # ---------------------------------------------------------------------------
 
 
@@ -315,8 +320,9 @@ def _status_payload(meta: dict) -> dict:
         }
         for name, stats in sorted(meta.get("files", {}).items())
     ]
-    return {
+    payload = {
         "id": meta["id"],
+        "kind": meta.get("kind", jobs.RPGM),
         "name": meta.get("name"),
         "engine": meta.get("engine"),
         "status": meta.get("status"),
@@ -327,10 +333,14 @@ def _status_payload(meta: dict) -> dict:
         "percent": round(100 * done / total, 1) if total else 0.0,
         "failed_units": meta.get("failed_units", 0),
         "unreadable_files": meta.get("unreadable_files", []),
-        "running": rpg_jobs.active_project_id() == meta["id"],
+        "running": jobs.active_project_id() == meta["id"],
         "files": files,
         "error": meta.get("error"),
     }
+    if meta.get("kind") == jobs.RENPY:
+        payload["script_files"] = meta.get("script_files", 0)
+        payload["compiled_slots"] = meta.get("compiled_slots", 0)
+    return payload
 
 
 def _require_project(project_id: str) -> dict:
@@ -338,6 +348,55 @@ def _require_project(project_id: str) -> dict:
     if meta is None:
         raise HTTPException(status_code=404, detail="Unknown project")
     return meta
+
+
+def _require_renpy(project_id: str) -> dict:
+    meta = renpy_store.load_meta(project_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Unknown project")
+    return meta
+
+
+async def _spool_upload(file: UploadFile, destination: Path) -> None:
+    """Stream an upload to disk in chunks.
+
+    Ren'Py uploads can be a whole game folder, and reading one into memory to
+    hand it to zipfile would size this service by the largest game anyone
+    tries rather than by the work it actually does.
+    """
+    limit = config.MAX_UPLOAD_MB * 1024 * 1024
+    total = 0
+    with open(destination, "wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            total += len(chunk)
+            if total > limit:
+                out.close()
+                destination.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Upload is larger than {config.MAX_UPLOAD_MB} MB. Zip "
+                        "only the .rpy/.rpyc scripts, or the game folder without "
+                        "its images and audio."
+                    ),
+                )
+            out.write(chunk)
+
+
+async def _start_job(kind: str, project_id: str, target_lang: str) -> None:
+    if not await llama_client.health():
+        raise HTTPException(
+            status_code=503,
+            detail="The model is still loading. Try again in a moment.",
+        )
+    try:
+        await jobs.start(kind, project_id, target_lang)
+    except RuntimeError as exc:
+        # One GPU, one job - across both engines. Say which project holds it.
+        raise HTTPException(
+            status_code=409,
+            detail=f"{exc} (project {jobs.active_project_id()})",
+        ) from exc
 
 
 @app.post("/project/upload", dependencies=[Depends(verify_api_key)])
@@ -358,7 +417,7 @@ async def upload_project(file: UploadFile = File(...)):
 async def list_projects():
     return {
         "projects": [_status_payload(m) for m in rpg_store.list_projects()],
-        "running": rpg_jobs.active_project_id(),
+        "running": jobs.active_project_id(),
         "retention_hours": config.PROJECT_RETENTION_HOURS,
     }
 
@@ -375,19 +434,7 @@ class StartTranslationRequest(BaseModel):
 @app.post("/project/{project_id}/start", dependencies=[Depends(verify_api_key)])
 async def start_project(project_id: str, req: StartTranslationRequest):
     meta = _require_project(project_id)
-    if not await llama_client.health():
-        raise HTTPException(
-            status_code=503,
-            detail="The model is still loading. Try again in a moment.",
-        )
-    try:
-        await rpg_jobs.start(project_id, req.target_lang)
-    except RuntimeError as exc:
-        # One GPU, one job: say which project is holding it.
-        raise HTTPException(
-            status_code=409,
-            detail=f"{exc} (project {rpg_jobs.active_project_id()})",
-        ) from exc
+    await _start_job(jobs.RPGM, project_id, req.target_lang)
     meta["status"] = rpg_store.STATUS_TRANSLATING
     meta["target_lang"] = req.target_lang
     return _status_payload(meta)
@@ -396,9 +443,9 @@ async def start_project(project_id: str, req: StartTranslationRequest):
 @app.post("/project/{project_id}/cancel", dependencies=[Depends(verify_api_key)])
 async def cancel_project(project_id: str):
     _require_project(project_id)
-    if rpg_jobs.active_project_id() != project_id:
+    if jobs.active_project_id() != project_id:
         raise HTTPException(status_code=409, detail="That project is not running")
-    rpg_jobs.cancel()
+    jobs.cancel()
     return {"cancelling": True}
 
 
@@ -422,9 +469,97 @@ async def download_project(project_id: str):
 
 @app.delete("/project/{project_id}", dependencies=[Depends(verify_api_key)])
 async def delete_project(project_id: str):
-    if rpg_jobs.active_project_id() == project_id:
-        rpg_jobs.cancel()
+    if jobs.active_project_id() == project_id:
+        jobs.cancel()
     if not rpg_store.delete(project_id):
+        raise HTTPException(status_code=404, detail="Unknown project")
+    return {"deleted": project_id}
+
+
+# ---------------------------------------------------------------------------
+# Ren'Py projects
+# ---------------------------------------------------------------------------
+
+
+@app.post("/renpy/upload", dependencies=[Depends(verify_api_key)])
+async def upload_renpy(file: UploadFile = File(...)):
+    """Accept a zip of .rpy/.rpyc scripts, or a whole game folder.
+
+    Everything that is not a script is ignored on the way in, so uploading the
+    folder costs the same as uploading the scripts by themselves.
+    """
+    renpy_store.purge_expired()
+    scratch = Path(config.PROJECT_DIR) / "incoming"
+    scratch.mkdir(parents=True, exist_ok=True)
+    archive = scratch / f"{uuid.uuid4().hex}.zip"
+    try:
+        await _spool_upload(file, archive)
+        try:
+            meta = await asyncio.to_thread(
+                renpy_store.create, archive, file.filename or "project.zip"
+            )
+        except renpy_store.UploadError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        archive.unlink(missing_ok=True)
+    return _status_payload(meta)
+
+
+@app.get("/renpy", dependencies=[Depends(verify_api_key)])
+async def list_renpy_projects():
+    return {
+        "projects": [_status_payload(m) for m in renpy_store.list_projects()],
+        "running": jobs.active_project_id(),
+        "retention_hours": config.PROJECT_RETENTION_HOURS,
+    }
+
+
+@app.get("/renpy/{project_id}/status", dependencies=[Depends(verify_api_key)])
+async def renpy_status(project_id: str):
+    return _status_payload(_require_renpy(project_id))
+
+
+@app.post("/renpy/{project_id}/start", dependencies=[Depends(verify_api_key)])
+async def start_renpy(project_id: str, req: StartTranslationRequest):
+    meta = _require_renpy(project_id)
+    await _start_job(jobs.RENPY, project_id, req.target_lang)
+    meta["status"] = renpy_store.STATUS_TRANSLATING
+    meta["target_lang"] = req.target_lang
+    return _status_payload(meta)
+
+
+@app.post("/renpy/{project_id}/cancel", dependencies=[Depends(verify_api_key)])
+async def cancel_renpy(project_id: str):
+    _require_renpy(project_id)
+    if jobs.active_project_id() != project_id:
+        raise HTTPException(status_code=409, detail="That project is not running")
+    jobs.cancel()
+    return {"cancelling": True}
+
+
+@app.get("/renpy/{project_id}/download", dependencies=[Depends(verify_api_key)])
+async def download_renpy(project_id: str):
+    """Return the translated scripts, and only those.
+
+    Files that received no translation are left out: dropping a handful of
+    changed .rpy files back into game/ is the whole install step, and shipping
+    the untouched ones back would make the download the size of the game.
+    """
+    meta = _require_renpy(project_id)
+    output = await asyncio.to_thread(renpy_store.build_output, project_id, meta)
+    stem = Path(meta.get("name") or project_id).stem
+    return FileResponse(
+        output,
+        media_type="application/zip",
+        filename=f"{stem}-{meta.get('target_lang') or 'translated'}.zip",
+    )
+
+
+@app.delete("/renpy/{project_id}", dependencies=[Depends(verify_api_key)])
+async def delete_renpy(project_id: str):
+    if jobs.active_project_id() == project_id:
+        jobs.cancel()
+    if not renpy_store.delete(project_id):
         raise HTTPException(status_code=404, detail="Unknown project")
     return {"deleted": project_id}
 
@@ -443,13 +578,13 @@ async def resume_translation_jobs():
     The Space sleeps; without this a project that was 90% translated would sit
     at 90% forever and have to be restarted by hand.
     """
-    removed = rpg_store.purge_expired()
+    removed = rpg_store.purge_expired() + renpy_store.purge_expired()
     if removed:
         print(f"[startup] purged {len(removed)} expired project(s)")
-    await rpg_jobs.resume_pending()
-    resumed = rpg_jobs.active_project_id()
+    await jobs.resume_pending()
+    resumed = jobs.active()
     if resumed:
-        print(f"[startup] resumed translation of project {resumed}")
+        print(f"[startup] resumed {resumed[0]} translation of project {resumed[1]}")
 
 
 # Registered last so it can't shadow the API routes above: Starlette matches

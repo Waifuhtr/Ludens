@@ -3,18 +3,19 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>RPG Maker Çeviri</title>
+<title>Ren'Py Çeviri</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>RPG Maker Çeviri <span class="badge">MV / MZ</span></h1>
+    <h1>Ren'Py Çeviri <span class="badge">.rpy / .rpyc</span></h1>
     <p class="sub">
-      Oyunun <code>data</code> (MZ) veya <code>www/data</code> (MV) klasörünü zip olarak yükleyin;
-      diyaloglar otomatik çıkarılır, çevrilir ve aynı yapıda geri paketlenir.
-      <a href="renpy.html">→ Ren'Py</a>
-      <a href="index.html">→ Hız testi arayüzü</a>
+      Sadece <code>.rpy</code> / <code>.rpyc</code> dosyalarını zip'leyin, ya da tüm
+      <code>game</code> klasörünü yükleyin — görsel ve ses dosyaları hiç açılmaz,
+      bu yüzden ikisi de aynı hızda çalışır.
+      <a href="rpgm.html">→ RPG Maker</a>
+      <a href="index.html">→ Hız testi</a>
     </p>
   </header>
 
@@ -38,7 +39,7 @@
     <div id="dropZone" class="dropzone">
       <input type="file" id="fileInput" accept=".zip" hidden />
       <strong>Zip dosyasını buraya sürükleyin</strong>
-      <span class="hint">veya tıklayıp seçin — yalnızca data klasörü, tüm oyun değil</span>
+      <span class="hint">veya tıklayıp seçin — script dosyaları ya da game klasörü</span>
     </div>
 
     <div class="actions">
@@ -66,6 +67,8 @@
       <p class="hint" id="overallNote"></p>
     </div>
 
+    <p class="hint" id="compiledNote" hidden></p>
+
     <h3 class="subhead">Dosya Bazında</h3>
     <div id="fileList" class="file-list"></div>
   </section>
@@ -75,6 +78,6 @@
     <pre id="log"></pre>
   </section>
 </div>
-<script src="rpgm.js"></script>
+<script src="renpy.js"></script>
 </body>
 </html>

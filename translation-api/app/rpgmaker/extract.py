@@ -3,15 +3,16 @@
 Deliberately narrow. RPG Maker stores executable script, plugin bindings,
 asset filenames and engine identifiers in the same JSON arrays as dialogue,
 and translating any of those breaks the game rather than mistranslating it -
-so this reads exactly three things:
+so this reads exactly four things:
 
   401 / 405  Show Text / Show Scrolling Text  - the dialogue itself
   102 / 402  Show Choices / When[choice]      - the buttons under that dialogue
   System.json terms                           - the menus wrapped around both
+  database name/description/message fields    - items, skills, enemies, states
 
-Everything else is left alone, including the database files (item and skill
-names), the MZ speaker-name field on 101, name-change commands (320/324/325),
-plugin commands (356/357) and Script blocks (355/655).
+Everything else is left alone, including the MZ speaker-name field on 101,
+name-change commands (320/324/325), plugin commands (356/357) and Script
+blocks (355/655).
 
 Consecutive 401 commands are one message box split across lines, not separate
 sentences, so a run of them is merged into a single unit and translated as one
@@ -54,6 +55,31 @@ _SYSTEM_TYPE_LISTS = (
     "weaponTypes",
 )
 
+# Database files: flat arrays of entries, index 0 always null (RPG Maker's ids
+# are 1-based). Only the fields the player actually reads are listed.
+#
+# `message1`..`message4` are battle-log templates ("%1 takes damage!") whose %1
+# and %2 are filled in by the engine; Hy-MT2 carries them through the same way
+# it carries \\C[2], so they are translated like any other line.
+#
+# Deliberately absent:
+#   note      - stores plugin notetags (<tag:value>) mixed with free text.
+#               Translating one would silently change plugin behaviour, and
+#               splitting text from tags is guesswork, so the whole field is
+#               left alone.
+#   Actors    - names, nicknames and profiles are the character names this
+#               tool does not translate.
+#   Classes   - class names read as character labels next to actor names, so
+#               they follow the same rule.
+_DATABASE_FIELDS: dict[str, tuple[str, ...]] = {
+    "Items.json": ("name", "description"),
+    "Weapons.json": ("name", "description"),
+    "Armors.json": ("name", "description"),
+    "Skills.json": ("name", "description", "message1", "message2"),
+    "Enemies.json": ("name",),
+    "States.json": ("name", "message1", "message2", "message3", "message4"),
+}
+
 
 @dataclass
 class Slot:
@@ -61,10 +87,16 @@ class Slot:
 
     `paths` is a list because a merged run of 401 commands writes one line per
     original command: the box keeps the same number of lines it had.
+
+    `raw` marks a slot that owns a whole field rather than one line of a
+    message box. Those are written exactly as the model returned them - a
+    two-line item description has to stay two lines, where the line-per-command
+    slots get re-flowed to match the box they came from.
     """
 
     file: str
     paths: list[list] = field(default_factory=list)
+    raw: bool = False
 
 
 @dataclass
@@ -173,20 +205,40 @@ def _extract_system(data: dict, sink) -> None:
             if isinstance(values, list):
                 for index, value in enumerate(values):
                     if isinstance(value, str) and value.strip():
-                        sink(value, Slot(file=name, paths=[["terms", key, index]]))
+                        sink(value, Slot(file=name, paths=[["terms", key, index]], raw=True))
 
         messages = terms.get("messages")
         if isinstance(messages, dict):
             for key, value in messages.items():
                 if isinstance(value, str) and value.strip():
-                    sink(value, Slot(file=name, paths=[["terms", "messages", key]]))
+                    sink(value, Slot(file=name, paths=[["terms", "messages", key]], raw=True))
 
     for key in _SYSTEM_TYPE_LISTS:
         values = data.get(key)
         if isinstance(values, list):
             for index, value in enumerate(values):
                 if isinstance(value, str) and value.strip():
-                    sink(value, Slot(file=name, paths=[[key, index]]))
+                    sink(value, Slot(file=name, paths=[[key, index]], raw=True))
+
+
+def _extract_database(name: str, data: list, fields: tuple[str, ...], sink) -> None:
+    """Read the player-visible fields out of one database file.
+
+    Index 0 of these arrays is null and entries can carry empty strings for
+    fields the designer never filled in, so both are skipped: writing a
+    translation into a blank description would put text on an item that is
+    meant to show none.
+    """
+    for entry_index, entry in enumerate(data):
+        if not isinstance(entry, dict):
+            continue
+        for key in fields:
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                sink(
+                    value,
+                    Slot(file=name, paths=[[entry_index, key]], raw=True),
+                )
 
 
 def _extract_file(name: str, data, sink) -> None:
@@ -212,6 +264,9 @@ def _extract_file(name: str, data, sink) -> None:
 
     elif name == "System.json" and isinstance(data, dict):
         _extract_system(data, sink)
+
+    elif name in _DATABASE_FIELDS and isinstance(data, list):
+        _extract_database(name, data, _DATABASE_FIELDS[name], sink)
 
 
 def detect_data_root(root: Path) -> tuple[Path, str] | None:

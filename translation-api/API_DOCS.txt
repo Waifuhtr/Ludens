@@ -167,14 +167,23 @@ What gets extracted and translated:
     terms.params, terms.messages, and the equip/skill/weapon/armor/element
     type-name arrays). gameTitle, currencyUnit, switches and variables are
     left untouched.
+  - Database files:
+      Items.json / Weapons.json / Armors.json : name, description
+      Skills.json                             : name, description,
+                                                message1, message2
+      Enemies.json                            : name
+      States.json                             : name, message1..message4
+    Database fields are written back verbatim (a two-line description stays
+    two lines); only message-box runs get re-wrapped.
   - NOT translated (out of scope): Script/plugin commands, Plugin Command
     calls, Change Name/Nickname/Profile commands, the MZ speaker-name field,
-    actor names/nicknames, and none of the database files (Items, Weapons,
-    Armors, Skills, Enemies, States, Actors, Classes) are read yet.
+    the `note` field on any database entry (it holds plugin notetags like
+    <tag:value>), Actors.json (name/nickname/profile) and Classes.json (name).
   - Identical source strings are deduplicated and translated once, however
     many times they appear in the project, to save GPU time.
   - One project may be translating at a time (single GPU) - starting a second
-    job while one is running returns 409.
+    job while one is running returns 409. This limit is SHARED with the Ren'Py
+    endpoints: an RPG Maker job blocks a Ren'Py job and vice versa.
   - A job is restart-safe: progress is saved to disk and automatically
     resumed if the server restarts mid-run.
   - Uploaded projects are auto-deleted PROJECT_RETENTION_HOURS after their
@@ -235,6 +244,7 @@ DELETE /project/{project_id}  (auth)
 Project status object (returned by upload/list/status/start):
   {
     "id": "<project_id>",
+    "kind": "rpgm" | "renpy",
     "name": "<original filename>",
     "engine": "mv" | "mz",
     "status": "uploaded" | "translating" | "done" | "cancelled" | "error" | ...,
@@ -252,6 +262,71 @@ Project status object (returned by upload/list/status/start):
     ],
     "error": "<string>" | null
   }
+
+
+================================================================================
+REN'PY PROJECT TRANSLATION
+================================================================================
+Same workflow as the RPG Maker endpoints, under /renpy instead of /project,
+and returning the same project status object (plus two extra fields).
+
+Accepted uploads (either shape):
+  - A zip of just .rpy / .rpyc script files, at any depth.
+  - A whole game folder. Only .rpy/.rpyc members are ever unpacked, so the
+    art and audio cost nothing in time or disk.
+
+Always skipped while scanning: tl/ (an existing translation), renpy/ (the
+engine's own source), and cache/, saves/, lib/, __pycache__/.
+
+What gets extracted and translated:
+  - say statements, with or without a speaker:  e "Hello."  /  "Narration."
+  - quoted speakers: `"???" "Who goes there?"` - the dialogue, not the name
+  - extend statements
+  - menu choices and the menu caption
+  - screen text: text, textbutton, tooltip, label, caption, alt
+    (the FIRST string on the line - later strings are style/action arguments)
+  - NOT translated: define/default (incl. Character() names), $ and python
+    blocks, style/transform/image/init blocks, scene/show/play/jump/call/add/
+    use arguments, and any existing translate block.
+  - Strings that are only markup ("{i}[points]{/i}") never reach the model.
+  - A literal using an escape outside \" \\ \n \t (e.g. Ren'Py's `\ ` hard
+    space) is left untranslated rather than rewritten.
+
+How translations are applied:
+  - .rpy  : written in place, replacing exactly the characters between the
+            quotes. Nothing else in the file is touched, so a file whose
+            strings all translate to themselves is byte-identical.
+  - .rpyc : compiled scripts cannot be rewritten. Their translations are
+            delivered instead as:
+              game/hymt_translate.rpy          - installs
+                                                 config.say_menu_text_filter
+                                                 (chaining any existing filter)
+              game/tl/<lang>/hymt_dialogue.json - source -> translation map
+              game/tl/<lang>/hymt_strings.rpy   - translate <lang> strings:
+                                                  block for _() interface text
+
+POST /renpy/upload  (auth)
+  multipart/form-data, field "file": the zip. Streamed to disk, so a large
+  game folder does not have to fit in memory. Max MAX_UPLOAD_MB (default 200).
+  400 if the zip is invalid, oversized, or contains no .rpy/.rpyc at all.
+  200 response: project status object.
+
+GET  /renpy                       (auth)  list projects + which holds the GPU
+GET  /renpy/{project_id}/status   (auth)  overall %, per-file %, failures
+POST /renpy/{project_id}/start    (auth)  body { "target_lang": "tr" }
+POST /renpy/{project_id}/cancel   (auth)  stop after in-flight strings finish
+GET  /renpy/{project_id}/download (auth)  zip of ONLY the changed files
+DELETE /renpy/{project_id}        (auth)  remove immediately
+
+Same status codes as the RPG Maker endpoints (404 / 409 / 503 / 400).
+
+Extra fields on a Ren'Py status object:
+  "script_files":   <int>   how many .rpy/.rpyc files were unpacked
+  "compiled_slots": <int>   strings that came from .rpyc and therefore travel
+                            via the generated hook rather than a file edit
+
+The download contains only files that actually received a translation.
+Extract it over the game's root directory to install.
 
 
 ================================================================================

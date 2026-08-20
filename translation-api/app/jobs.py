@@ -1,49 +1,84 @@
-"""The background translation run.
+"""The single background translation run, shared by every game engine.
 
-One job at a time, by design: there is a single GPU behind this, so a second
-concurrent project would only make both finish later while doubling VRAM
-pressure.
+One job at a time, for the whole process. There is a single GPU behind this, so
+a second concurrent project would only make both finish later while doubling
+VRAM pressure - and that has to hold *across* engines, not just within one.
+A Ren'Py job and an RPG Maker job compete for exactly the same slots, so they
+share one runner and one lock.
 
-The run is restart-safe. Every completed string is written to
-translations.json, and on startup a project still marked `translating` is
-picked back up - it re-reads what is already done and only works through the
-remainder, so a Space that sleeps mid-game resumes instead of starting over.
+The run is restart-safe. Every finished string is written to translations.json,
+and on startup a project still marked `translating` is picked back up: it
+re-reads what is already done and works through the remainder, so a Space that
+sleeps mid-game resumes instead of paying for the whole run again.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from typing import Callable
 
-from .. import config, glossary as glossary_store, llama_client
-from ..translation import build_messages, is_translatable
-from . import store
+from . import config, glossary as glossary_store, llama_client
+from .translation import build_messages
 
 # How often progress reaches disk. Small enough that a crash loses seconds of
 # GPU time, large enough not to rewrite a growing JSON file per string.
 _FLUSH_EVERY = 25
 
+RPGM = "rpgm"
+RENPY = "renpy"
+
 _task: asyncio.Task | None = None
 _cancel = False
 _active_id: str | None = None
+_active_kind: str | None = None
+
+
+def _engine(kind: str) -> tuple[object, Callable[[str], bool]]:
+    """Resolve a project kind to its store and its translatability test.
+
+    Imported lazily: the stores import config, and importing them at module
+    scope would tie this module's import order to theirs.
+    """
+    if kind == RENPY:
+        from .renpy import store
+        from .renpy.text import is_translatable
+    else:
+        from .rpgmaker import store
+        from .translation import is_translatable
+    return store, is_translatable
+
+
+def stores() -> list[tuple[str, object]]:
+    return [(kind, _engine(kind)[0]) for kind in (RPGM, RENPY)]
+
+
+def active() -> tuple[str, str] | None:
+    """The (kind, project_id) currently holding the GPU, if any."""
+    if _task and not _task.done() and _active_id and _active_kind:
+        return _active_kind, _active_id
+    return None
 
 
 def active_project_id() -> str | None:
-    return _active_id if _task and not _task.done() else None
+    running = active()
+    return running[1] if running else None
 
 
 def is_running() -> bool:
-    return active_project_id() is not None
+    return active() is not None
 
 
-async def _translate_one(source: str, target_lang: str) -> str:
+async def _translate_one(
+    source: str, target_lang: str, is_translatable: Callable[[str], bool]
+) -> str:
     """Translate one unit.
 
     The result is used as-is. An earlier version compared the source's control
     codes against the translation's and held back any string where they
-    differed, but Hy-MT2 preserves \\C[2], \\N[1] and friends on its own, so
-    that gate mostly withheld good translations. The only thing still refused
-    is an empty response, which would blank a line in-game.
+    differed, but Hy-MT2 preserves markup on its own, so that gate mostly
+    withheld good translations. The only thing still refused is an empty
+    response, which would blank a line in-game.
     """
     if not is_translatable(source):
         return source
@@ -62,8 +97,8 @@ async def _translate_one(source: str, target_lang: str) -> str:
     return translated or source
 
 
-async def _run(project_id: str, target_lang: str) -> None:
-    global _cancel
+async def _run(kind: str, project_id: str, target_lang: str) -> None:
+    store, is_translatable = _engine(kind)
     meta = store.load_meta(project_id)
     if meta is None:
         return
@@ -110,10 +145,10 @@ async def _run(project_id: str, target_lang: str) -> None:
             except asyncio.QueueEmpty:
                 return
             try:
-                text = await _translate_one(unit.source, target_lang)
+                text = await _translate_one(unit.source, target_lang, is_translatable)
             except Exception:  # noqa: BLE001 - one bad string must not kill the run
                 # Backend error, not a bad translation: keep the source line so
-                # the game still reads correctly and count it so the total is
+                # the game still reads correctly, and count it so the total is
                 # honest about what the model actually produced.
                 text = unit.source
                 async with lock:
@@ -145,13 +180,14 @@ async def _run(project_id: str, target_lang: str) -> None:
         store.save_meta(project_id, meta)
 
 
-async def start(project_id: str, target_lang: str) -> None:
-    global _task, _cancel, _active_id
+async def start(kind: str, project_id: str, target_lang: str) -> None:
+    global _task, _cancel, _active_id, _active_kind
     if is_running():
         raise RuntimeError("A translation is already running")
     _cancel = False
     _active_id = project_id
-    _task = asyncio.create_task(_run(project_id, target_lang))
+    _active_kind = kind
+    _task = asyncio.create_task(_run(kind, project_id, target_lang))
 
 
 def cancel() -> bool:
@@ -163,10 +199,11 @@ def cancel() -> bool:
 
 
 async def resume_pending() -> None:
-    """Restart a run that a shutdown interrupted."""
+    """Restart a run that a shutdown interrupted, whichever engine owned it."""
     if is_running():
         return
-    for meta in store.list_projects():
-        if meta.get("status") == store.STATUS_TRANSLATING and meta.get("target_lang"):
-            await start(meta["id"], meta["target_lang"])
-            return
+    for kind, store in stores():
+        for meta in store.list_projects():
+            if meta.get("status") == store.STATUS_TRANSLATING and meta.get("target_lang"):
+                await start(kind, meta["id"], meta["target_lang"])
+                return

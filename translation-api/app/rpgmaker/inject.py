@@ -85,13 +85,15 @@ def apply(
     Groups writes by file so each file is parsed and serialised once, however
     many strings land in it. Returns (written_slots, skipped_slots).
     """
-    slots_by_file: dict[str, list[tuple[list[list], str]]] = {}
+    slots_by_file: dict[str, list[tuple[list[list], str, bool]]] = {}
     for unit in units:
         translated = translations.get(unit.source)
         if translated is None:
             continue
         for slot in unit.slots:
-            slots_by_file.setdefault(slot.file, []).append((slot.paths, translated))
+            slots_by_file.setdefault(slot.file, []).append(
+                (slot.paths, translated, slot.raw)
+            )
 
     written = skipped = 0
     for file_name, entries in slots_by_file.items():
@@ -99,11 +101,16 @@ def apply(
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            skipped += sum(len(paths) for paths, _ in entries)
+            skipped += sum(len(paths) for paths, _, _ in entries)
             continue
 
-        for paths, translated in entries:
-            for line, path in zip(rewrap(translated, len(paths)), paths):
+        for paths, translated, raw in entries:
+            # A raw slot is one whole field (an item description, a menu term),
+            # so it keeps whatever line breaks the model produced. Everything
+            # else is a message box and has to come back with the line count it
+            # went in with.
+            lines = [translated] if raw else rewrap(translated, len(paths))
+            for line, path in zip(lines, paths):
                 if _assign(data, path, line):
                     written += 1
                 else:

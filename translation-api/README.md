@@ -92,8 +92,30 @@ wrapped around that dialogue:
 
 Null and empty entries are left as they are: RPG Maker pads these arrays to a
 fixed length and index 0 is normally blank, so writing text into one would put
-stray words in the menu. Database files (`Actors.json`, `Items.json`, …) and
-`plugins.js` are untouched.
+stray words in the menu.
+
+Plus the database — the item, skill and enemy names the player reads in menus
+and battle:
+
+| file | fields | translated |
+|---|---|---|
+| `Items.json`, `Weapons.json`, `Armors.json` | `name`, `description` | **yes** |
+| `Skills.json` | `name`, `description`, `message1`, `message2` | **yes** |
+| `Enemies.json` | `name` | **yes** |
+| `States.json` | `name`, `message1`–`message4` | **yes** |
+| any of the above | `note` | no — holds plugin notetags (`<tag:value>`) |
+| `Actors.json` | `name`, `nickname`, `profile` | no — character names |
+| `Classes.json` | `name` | no — reads as a character label |
+
+`message1`–`message4` are battle-log templates (`%1 takes damage!`) whose `%1`
+and `%2` the engine fills in; Hy-MT2 carries them through like any other
+markup. `note` is skipped as a whole field rather than parsed: it mixes free
+text with plugin notetags, and translating a tag would silently change plugin
+behaviour. `plugins.js` is untouched.
+
+Database fields are written back verbatim, not re-wrapped — a two-line item
+description stays two lines. Only message-box runs are re-flowed, and only
+because their line count is an invariant.
 
 Two details make the output safe to ship:
 
@@ -134,11 +156,93 @@ source line too.
 | `GET` | `/project` | list projects and which one holds the GPU |
 
 One run at a time — there is a single GPU, so a second concurrent project
-would only make both finish later. Progress is written to disk continuously
-and a run interrupted by the Space sleeping is **resumed on startup**, which
-is why `PROJECT_DIR` defaults to the persistent volume (`/data/projects`)
-when one is mounted. Uploads are deleted after `PROJECT_RETENTION_HOURS`
-(default 24).
+would only make both finish later. That limit is shared with the Ren'Py
+endpoints below: both engines queue behind the same runner, and starting a
+job while any project holds the GPU returns `409` naming the one that has it.
+Progress is written to disk continuously and a run interrupted by the Space
+sleeping is **resumed on startup**, which is why `PROJECT_DIR` defaults to the
+persistent volume (`/data/projects`) when one is mounted. Uploads are deleted
+after `PROJECT_RETENTION_HOURS` (default 24).
+
+## Translating a Ren'Py game
+
+Upload either shape you have — a zip of nothing but scripts, or the whole
+`game/` folder. Only `.rpy` and `.rpyc` files are ever unpacked, so a folder
+full of art and audio costs the same as the scripts alone. Open `/renpy.html`
+for the UI, or:
+
+```bash
+BASE=https://your-space.hf.space
+ID=$(curl -sF file=@game.zip $BASE/renpy/upload | jq -r .id)
+curl -s -X POST $BASE/renpy/$ID/start -H 'Content-Type: application/json' \
+     -d '{"target_lang":"tr"}'
+curl -s $BASE/renpy/$ID/status | jq '.percent, .files'
+curl -so translated.zip $BASE/renpy/$ID/download
+```
+
+The download holds **only the files that changed**. Extract it over the game's
+root and the translation is installed.
+
+### What gets translated
+
+| statement | example | translated |
+|---|---|---|
+| say, with or without a speaker | `e "Hello."`, `"Narration."` | **yes** |
+| quoted speaker | `"???" "Who goes there?"` | **yes** (the dialogue, not the name) |
+| `extend` | `extend " and more."` | **yes** |
+| menu choices and caption | `"Go left":` | **yes** |
+| screen text | `text`, `textbutton`, `tooltip`, `label`, `caption`, `alt` | **yes** (first string only) |
+| `define` / `default` | `define e = Character("Eileen")` | no — character names and constants |
+| python | `$ x = "…"`, `init python:` blocks | no — executable code |
+| `style`, `transform`, `image`, `init` blocks | `font "fonts/x.ttf"` | no |
+| `scene`, `show`, `play`, `jump`, `call`, `add`, `use` | asset and label names | no |
+| `translate` blocks and `tl/` | somebody else's translation | no |
+
+Three properties make writing back safe:
+
+- **Exact spans.** Every string is located once, with the offsets of the
+  characters between its quotes, and a translation replaces exactly those.
+  The code around it is never re-parsed or re-indented, so a file whose
+  strings all translate to themselves comes back byte-identical.
+- **Reversible escaping.** `\"`, `\\`, `\n` and `\t` are unescaped on the way
+  in and re-escaped on the way out. A literal using any *other* escape (Ren'Py's
+  `\ ` hard space) is left untranslated rather than guessed at.
+- **Markup survives.** `{i}`, `{color=#fff}`, `[player_name]` and the doubled
+  literal forms `{{` / `[[` pass through untouched, and a string that is
+  *only* markup (`{i}[points]{/i}`) never reaches the model.
+
+### Games that ship only `.rpyc`
+
+Compiled scripts are readable but not writable — their syntax tree encodes
+positions the engine checks — so their text arrives a different way. The
+download then also contains:
+
+| file | purpose |
+|---|---|
+| `game/hymt_translate.rpy` | installs `config.say_menu_text_filter`, chaining any filter the game already set |
+| `game/tl/<lang>/hymt_dialogue.json` | the source → translation map it reads |
+| `game/tl/<lang>/hymt_strings.rpy` | a `translate <lang> strings:` block for `_()`-marked interface text |
+
+`old` keys in that block are unique by construction: Ren'Py 7.5+ refuses to
+start if a string is translated twice. The Python inside the hook is compiled
+before it is written, because a generated `.rpy` with a syntax error takes the
+whole game down on launch.
+
+### Ren'Py endpoints
+
+| method | path | purpose |
+|---|---|---|
+| `POST` | `/renpy/upload` | multipart zip; unpacks scripts only, indexes text |
+| `POST` | `/renpy/{id}/start` | begin (or resume); body `{"target_lang":"tr"}` |
+| `GET` | `/renpy/{id}/status` | overall %, per-file %, failure count |
+| `POST` | `/renpy/{id}/cancel` | stop after in-flight strings finish |
+| `GET` | `/renpy/{id}/download` | zip of the changed scripts |
+| `DELETE` | `/renpy/{id}` | remove immediately |
+| `GET` | `/renpy` | list projects and which one holds the GPU |
+
+Status adds two fields over the RPG Maker shape: `script_files` (how many
+scripts were unpacked) and `compiled_slots` (how many strings came out of
+`.rpyc` and will travel via the hook).
 
 ## Translation endpoints
 

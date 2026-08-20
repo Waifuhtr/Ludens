@@ -1,10 +1,12 @@
-"""On-disk state for uploaded projects.
+"""On-disk state for uploaded Ren'Py projects.
 
-Everything a running job needs lives in files, not memory, because the Space
-sleeps and restarts: a job that has translated 40,000 strings must come back
-after a restart with those 40,000 still done. Progress is flushed
-periodically rather than per string, so a crash costs seconds of work, not
-hours.
+Kept apart from the RPG Maker projects in its own folder so neither engine can
+ever read the other's metadata, and so listing one never has to filter out the
+other.
+
+Only scripts are ever unpacked. People upload whole `game/` folders that are
+mostly art and audio, and none of it is read, so writing gigabytes to disk to
+translate a few megabytes of text would be pure cost.
 """
 
 from __future__ import annotations
@@ -18,19 +20,19 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .. import config
-from .extract import Slot, Unit, detect_data_root, extract
+from .extract import SCRIPT_SUFFIXES, Slot, Unit, extract, has_scripts, is_skipped
 
-# Job lifecycle. `translating` is the only one a restart needs to resume.
-STATUS_EXTRACTING = "extracting"
 STATUS_READY = "ready"
 STATUS_TRANSLATING = "translating"
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
 
+KIND = "renpy"
+
 
 def root() -> Path:
-    path = Path(config.PROJECT_DIR)
+    path = Path(config.PROJECT_DIR) / "renpy"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -53,8 +55,6 @@ def load_meta(project_id: str) -> dict | None:
 def save_meta(project_id: str, meta: dict) -> None:
     meta["updated_at"] = time.time()
     path = _meta_path(project_id)
-    # Write-then-rename: a restart in the middle of a flush must not leave a
-    # half-written meta.json that makes the project unreadable.
     temp = path.with_suffix(".json.tmp")
     temp.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     temp.replace(path)
@@ -65,12 +65,7 @@ def load_units(project_id: str) -> list[Unit]:
     return [
         Unit(
             source=item["source"],
-            slots=[
-                # .get for `raw`: projects indexed before raw slots existed have
-                # no such key, and a resumed job must still read its own units.
-                Slot(file=s["file"], paths=s["paths"], raw=s.get("raw", False))
-                for s in item["slots"]
-            ],
+            slots=[Slot(**slot) for slot in item["slots"]],
         )
         for item in raw
     ]
@@ -97,70 +92,79 @@ def save_translations(project_id: str, translations: dict[str, str]) -> None:
     temp.replace(path)
 
 
-def data_dir(project_id: str, meta: dict) -> Path:
-    return project_dir(project_id) / "source" / meta["data_root"]
+def source_dir(project_id: str) -> Path:
+    return project_dir(project_id) / "source"
 
 
 class UploadError(ValueError):
-    """Raised for uploads that are not usable RPG Maker projects."""
+    """Raised for uploads that hold no usable Ren'Py script."""
 
 
-def create(zip_bytes: bytes, name: str) -> dict:
-    """Unpack an upload, find its data folder and index the dialogue."""
-    if len(zip_bytes) > config.MAX_UPLOAD_MB * 1024 * 1024:
-        raise UploadError(
-            f"Upload is larger than {config.MAX_UPLOAD_MB} MB. Zip only the "
-            "data folder (MZ) or www/data (MV), not the whole game."
-        )
+def _unpack_scripts(archive: Path, target: Path) -> int:
+    """Extract only the scripts from `archive`. Returns how many were written."""
+    written = 0
+    with zipfile.ZipFile(archive) as zf:
+        for member in zf.infolist():
+            if member.is_dir():
+                continue
+            name = Path(member.filename)
+            if name.suffix.lower() not in SCRIPT_SUFFIXES:
+                continue
+            if is_skipped(name):
+                continue
 
+            destination = (target / member.filename).resolve()
+            # Reject absolute paths and ../ escapes rather than trusting the
+            # archive to stay inside its own folder.
+            if not str(destination).startswith(str(target.resolve())):
+                raise UploadError(f"Unsafe path in zip: {member.filename}")
+
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member) as incoming, open(destination, "wb") as outgoing:
+                shutil.copyfileobj(incoming, outgoing)
+            written += 1
+    return written
+
+
+def create(archive: Path, name: str) -> dict:
+    """Unpack an upload's scripts and index the text in them."""
     project_id = uuid.uuid4().hex[:12]
     base = project_dir(project_id)
-    source = base / "source"
+    source = source_dir(project_id)
     source.mkdir(parents=True, exist_ok=True)
 
-    archive = base / "upload.zip"
-    archive.write_bytes(zip_bytes)
     try:
-        with zipfile.ZipFile(archive) as zf:
-            for member in zf.infolist():
-                # Reject absolute paths and ../ escapes rather than trusting
-                # the archive to stay inside its own folder.
-                target = (source / member.filename).resolve()
-                if not str(target).startswith(str(source.resolve())):
-                    raise UploadError(f"Unsafe path in zip: {member.filename}")
-            zf.extractall(source)
+        count = _unpack_scripts(archive, source)
     except zipfile.BadZipFile as exc:
         shutil.rmtree(base, ignore_errors=True)
         raise UploadError("Not a valid .zip file") from exc
     except UploadError:
         shutil.rmtree(base, ignore_errors=True)
         raise
-    finally:
-        archive.unlink(missing_ok=True)
 
-    found = detect_data_root(source)
-    if found is None:
+    if not count or not has_scripts(source):
         shutil.rmtree(base, ignore_errors=True)
         raise UploadError(
-            "No RPG Maker data folder found in the zip. Expected a folder "
-            "named 'data' (MZ) or 'www/data' (MV) containing System.json and "
-            "Map*.json."
+            "No Ren'Py scripts found in the zip. Expected .rpy or .rpyc files - "
+            "either on their own or inside a game folder."
         )
-    found_dir, engine = found
 
-    units, broken = extract(found_dir)
+    units, broken = extract(source)
 
     files: dict[str, dict] = {}
+    compiled = 0
     for unit in units:
         for slot in unit.slots:
             entry = files.setdefault(slot.file, {"total": 0, "done": 0})
             entry["total"] += 1
+            if not slot.writable:
+                compiled += 1
 
     meta = {
         "id": project_id,
+        "kind": KIND,
         "name": name,
-        "engine": engine,
-        "data_root": str(found_dir.relative_to(source)),
+        "engine": "renpy",
         "status": STATUS_READY,
         "created_at": time.time(),
         "updated_at": time.time(),
@@ -169,6 +173,10 @@ def create(zip_bytes: bytes, name: str) -> dict:
         "total_slots": sum(f["total"] for f in files.values()),
         "translated_units": 0,
         "failed_units": 0,
+        "script_files": count,
+        # Strings that came out of compiled scripts. They cannot be written
+        # back into the .rpyc, so they travel in a generated translation file.
+        "compiled_slots": compiled,
         "unreadable_files": broken,
         "files": files,
         "error": None,
@@ -198,7 +206,6 @@ def delete(project_id: str) -> bool:
 
 
 def purge_expired() -> list[str]:
-    """Delete projects untouched for longer than the retention window."""
     cutoff = time.time() - config.PROJECT_RETENTION_HOURS * 3600
     removed = []
     for meta in list_projects():
@@ -209,27 +216,45 @@ def purge_expired() -> list[str]:
 
 
 def build_output(project_id: str, meta: dict) -> Path:
-    """Produce the translated data folder as a downloadable zip.
+    """Package the translated scripts.
 
-    Rebuilt from the untouched source every time so a re-download after more
-    strings finished reflects the newer state, and so a failed run never
-    leaves a half-written tree behind.
+    Only files that actually changed go in the zip. A Ren'Py game folder is
+    mostly art and audio, and shipping it back unchanged would turn a few
+    hundred kilobytes of script into a download the size of the game.
     """
-    from . import inject
+    from . import inject, tl
 
     base = project_dir(project_id)
     staging = base / "build"
     shutil.rmtree(staging, ignore_errors=True)
-    shutil.copytree(base / "source", staging)
+    shutil.copytree(source_dir(project_id), staging)
 
-    staged_data = staging / meta["data_root"]
-    inject.apply(staged_data, load_units(project_id), load_translations(project_id))
+    units = load_units(project_id)
+    translations = load_translations(project_id)
+    lang = meta.get("target_lang") or "translated"
+
+    inject.apply(staging, units, translations)
+
+    # Files that received at least one translation - the only ones worth
+    # sending back.
+    changed = {
+        slot.file
+        for unit in units
+        if unit.source in translations
+        for slot in unit.slots
+        if slot.writable
+    }
+
+    generated = tl.write_runtime_translation(staging, units, translations, lang)
 
     output = base / "translated.zip"
     output.unlink(missing_ok=True)
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(staging.rglob("*")):
+        for name in sorted(changed):
+            path = staging / name
             if path.is_file():
-                zf.write(path, path.relative_to(staging))
+                zf.write(path, name)
+        for path in generated:
+            zf.write(path, path.relative_to(staging).as_posix())
     shutil.rmtree(staging, ignore_errors=True)
     return output
