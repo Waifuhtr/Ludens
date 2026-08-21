@@ -236,6 +236,40 @@ Ren'Py recompiles a fresh one from the translated .rpy on next launch.
 """
 
 
+_INSTALL_NOTICE_NAME = "HYMT_INSTALL.txt"
+
+_INSTALL_ROOTED = """\
+HOW TO INSTALL
+==============
+
+This zip mirrors your game's own folder layout, starting at the folder that
+contains `game/`. Extract it over your game's root directory and answer
+"replace" when asked - every file in here belongs exactly where it lands.
+"""
+
+_INSTALL_LOOSE = """\
+HOW TO INSTALL
+==============
+
+You uploaded loose script files rather than a `game/` folder, so this zip has
+no `game/` folder either. Everything in here belongs INSIDE your game's
+`game/` folder:
+
+  <YourGame>/game/hymt_translate.rpy
+  <YourGame>/game/tl/<language>/...
+
+Copy the contents of this zip into `<YourGame>/game/`, keeping the `tl/`
+folder structure intact. Do not put them next to the .exe - Ren'Py only reads
+scripts from inside `game/`.
+"""
+
+_INSTALL_FOOTER = """
+Then start the game and choose the language, or set it in Preferences. Nothing
+here overwrites your original scripts: the translations are additional files
+that Ren'Py reads at runtime.
+"""
+
+
 def build_output(project_id: str, meta: dict) -> tuple[Path, list[str]]:
     """Package the translated scripts.
 
@@ -295,5 +329,13 @@ def build_output(project_id: str, meta: dict) -> tuple[Path, list[str]]:
         if stale_rpyc:
             notice = _STALE_NOTICE_HEADER + "\n".join(stale_rpyc) + _STALE_NOTICE_FOOTER
             zf.writestr(_STALE_NOTICE_NAME, notice)
+        # Where the files go depends on the shape of the upload, and getting it
+        # wrong means the game simply ignores the translation with no error at
+        # all - so it is spelled out rather than left to be inferred.
+        rooted = tl.game_root(staging, units) != staging
+        zf.writestr(
+            _INSTALL_NOTICE_NAME,
+            (_INSTALL_ROOTED if rooted else _INSTALL_LOOSE) + _INSTALL_FOOTER,
+        )
     shutil.rmtree(staging, ignore_errors=True)
     return output, stale_rpyc

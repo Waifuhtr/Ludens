@@ -244,7 +244,17 @@ also encodes line/file positions the engine checks and can't be edited:
 |---|---|
 | `game/hymt_translate.rpy` | installs `config.say_menu_text_filter`, chaining any filter the game already set |
 | `game/tl/<lang>/hymt_dialogue.json` | the source → translation map it reads |
-| `game/tl/<lang>/hymt_strings.rpy` | a `translate <lang> strings:` block for `_()`-marked interface text |
+| `game/tl/<lang>/hymt_strings.rpy` | a `translate <lang> strings:` block for interface text |
+| `HYMT_INSTALL.txt` | where the files go, which depends on whether the upload had a `game/` folder |
+
+One detail decides whether any of this works at all. Pickle returns an
+object's state in two different shapes, and Ren'Py uses both **in the same
+game**: screen-language classes come back as a plain `__dict__`, but
+`renpy.ast` nodes declare `__slots__`, and for those the state is the pair
+`(instance_dict, slots_dict)` with either half allowed to be `None`. A `Say`
+node's text lives in the slots half, so a reader that treats the pair as
+opaque finds `what` unset and concludes — with no error anywhere — that a
+496 KB script contains no dialogue. Both halves are merged.
 
 `old` keys in that block are unique by construction: Ren'Py 7.5+ refuses to
 start if a string is translated twice. The Python inside the hook is compiled
@@ -263,12 +273,11 @@ Labels are therefore matched by shape, not position: an argument is accepted
 only when it parses to a bare string literal or an explicit `_()` / `__()`
 marker, never a name, attribute or call.
 
-Measured against a real 56 KB `screens.rpyc` (41 screens, 248 displayables,
-809 compiled expressions), that yields 79 strings — the full Ren'Py menu
-(`Start`, `Save`, `Load`, `Options`, `History`, `Controls`, volume and text-speed
+Measured against a real 51 KB `screens.rpyc` (41 screens, 248 displayables,
+809 compiled expressions), that yields 77 strings — the full Ren'Py menu
+(`Start`, `Save`, `Load`, `Preferences`, `History`, volume and text-speed
 labels, the whole keyboard/mouse/gamepad help) plus the game's own interface
-(`Oyuncu İstatistikleri`, `Krediler $[fon]`, `Enerji: [energy]`) — while
-excluding every one of these:
+strings — while excluding every one of these:
 
 | excluded | why |
 |---|---|

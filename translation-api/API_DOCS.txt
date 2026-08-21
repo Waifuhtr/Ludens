@@ -300,6 +300,13 @@ What gets extracted from a COMPILED .rpyc with no .rpy source:
   - Say and Menu text (dialogue + menu choices) - stored as plain strings in
     the compiled tree, since dialogue is substituted at display time rather
     than evaluated as code.
+      Note on how this is read: pickle returns object state in two different
+      shapes and Ren'Py uses both in the same game. Screen-language classes
+      come back as a plain __dict__, while renpy.ast nodes declare __slots__
+      and come back as the pair (instance_dict, slots_dict), either half
+      possibly None. A Say node's text sits in the slots half, so both halves
+      are merged - a reader that ignores the pair form silently reports zero
+      dialogue for an entire script.
   - Screen text: the `text`, `textbutton` and `label` statements, the
     `tooltip` and `alt` properties, and screen titles passed as
     `use game_menu(_("Options"))`. This covers menu buttons and in-game
@@ -387,8 +394,17 @@ Extra fields on a Ren'Py status object:
                                  exact paths from your game folder first
 
 The download contains only files that actually received a translation, plus
-HYMT_DELETE_THESE_RPYC_FIRST.txt when stale_rpyc is non-empty.
-Extract it over the game's root directory to install.
+HYMT_DELETE_THESE_RPYC_FIRST.txt when stale_rpyc is non-empty, plus
+HYMT_INSTALL.txt always.
+
+Where the files go depends on the shape of the upload, which is why
+HYMT_INSTALL.txt is generated per download rather than documented once:
+  - upload contained a game/ folder -> the zip mirrors that layout; extract it
+    over the game's ROOT directory.
+  - upload was loose script files    -> the zip has no game/ folder; copy its
+    contents INTO <YourGame>/game/, keeping the tl/ structure intact.
+Getting this wrong is silent - Ren'Py just ignores translations it cannot
+find, with no error.
 
 
 ================================================================================

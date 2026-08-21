@@ -140,10 +140,25 @@ class _Stand:
         pass
 
     def __setstate__(self, state) -> None:
+        # Pickle hands back state in one of two shapes, and Ren'Py uses both
+        # in the same file. Screen-language classes come back as a plain
+        # __dict__, but renpy.ast nodes declare __slots__, and for those
+        # pickle's default is the pair (instance_dict, slots_dict) with either
+        # half allowed to be None.
+        #
+        # Merging both halves is what makes a compiled script readable at all:
+        # a Say node's text lives in the slots half, so treating the pair as
+        # opaque leaves `what` unset and the whole file looks like it contains
+        # no dialogue.
         if isinstance(state, dict):
             self.__dict__.update(state)
-        else:
-            self.__dict__["_state"] = state
+            return
+        if isinstance(state, tuple) and len(state) == 2:
+            for half in state:
+                if isinstance(half, dict):
+                    self.__dict__.update(half)
+            return
+        self.__dict__["_state"] = state
 
     # Pickle sometimes appends to or updates a reconstructed object.
     def append(self, item) -> None:
