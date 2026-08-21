@@ -211,11 +211,34 @@ Three properties make writing back safe:
   literal forms `{{` / `[[` pass through untouched, and a string that is
   *only* markup (`{i}[points]{/i}`) never reaches the model.
 
-### Games that ship only `.rpyc`
+### Compiled scripts (`.rpyc`) — the mobile-game case
 
-Compiled scripts are readable but not writable — their syntax tree encodes
-positions the engine checks — so their text arrives a different way. The
-download then also contains:
+Mobile Ren'Py builds routinely ship without `.rpy` sources at all, so `.rpyc`
+support is not an edge case here — it is read on the same pass as `.rpy`,
+using the same safe-unpickling reader either way.
+
+**A `.rpyc` is only ever read when it has no `.rpy` sibling in the same
+folder.** Where both exist — common even in "compiled" distributions, since
+dev/SDK builds often leave a precompiled cache sitting next to the source —
+Ren'Py itself always treats the `.rpy` as the source of truth, and this tool
+follows the same rule. Reading both would translate the same dialogue twice;
+worse, if a stale `.rpyc` isn't touched while its `.rpy` sibling gets
+translated in place, Ren'Py can end up running the untranslated compiled
+version against the new source once both are installed, which shows up as
+opaque crashes (`... must return a Text object` is one observed shape). This
+tool now closes that gap on both ends:
+- extraction skips a `.rpyc` outright when its `.rpy` sibling is present, so
+  it's never double-scanned;
+- if that `.rpy` sibling received a translation, the download's
+  `HYMT_DELETE_THESE_RPYC_FIRST.txt` names its now-stale `.rpyc` explicitly —
+  install can't silently leave a mismatched compiled cache behind, since
+  extracting a zip only adds/overwrites files, never deletes them.
+
+For a script with **no** `.rpy` — the pure-compiled case — the AST is read
+directly. `Say` and `Menu` text come out as plain strings (dialogue is never
+evaluated as code, only substituted at display time, so the compiled tree
+holds it literally) and reach the game a different way, since the bytecode
+also encodes line/file positions the engine checks and can't be edited:
 
 | file | purpose |
 |---|---|
@@ -226,7 +249,23 @@ download then also contains:
 `old` keys in that block are unique by construction: Ren'Py 7.5+ refuses to
 start if a string is translated twice. The Python inside the hook is compiled
 before it is written, because a generated `.rpy` with a syntax error takes the
-whole game down on launch.
+whole game down on launch. The reader itself never runs code from the file —
+every class name the pickle references resolves to an inert stand-in rather
+than the real (potentially arbitrary) object it names — and reports a file as
+unreadable rather than silently returning a partial scan if its node budget
+is ever exhausted.
+
+**Not yet covered from a `.rpyc` with no source:** text inside `screen`
+blocks (`text`, `textbutton`, buttons and menus in general). Ren'Py compiles
+every screen argument, including a plain `"Continue"` label, into an
+evaluated expression rather than a literal string — telling "this is the
+button's label" apart from "this is its style name" needs a real
+screen-language decompiler, and guessing wrong would translate a style or
+action name instead, corrupting the screen rather than just missing a
+translation. A game that ships `screens.rpy` (or `gui.rpy`, `menu_screen.rpy`,
+…) as regular `.rpy` source already gets that text translated through the
+ordinary source editor above — this gap is specific to a screen compiled
+*without* its source.
 
 ### Ren'Py endpoints
 
@@ -240,9 +279,12 @@ whole game down on launch.
 | `DELETE` | `/renpy/{id}` | remove immediately |
 | `GET` | `/renpy` | list projects and which one holds the GPU |
 
-Status adds two fields over the RPG Maker shape: `script_files` (how many
-scripts were unpacked) and `compiled_slots` (how many strings came out of
-`.rpyc` and will travel via the hook).
+Status adds three fields over the RPG Maker shape: `script_files` (how many
+scripts were unpacked), `compiled_slots` (how many strings came out of
+`.rpyc` and will travel via the hook), and `stale_rpyc` (`.rpyc` files that
+are now stale relative to a `.rpy` sibling this run translated — empty until
+a download has computed it; delete these from your game folder before
+installing the translated files).
 
 ## Translation endpoints
 

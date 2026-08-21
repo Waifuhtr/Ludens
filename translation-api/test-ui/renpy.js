@@ -143,6 +143,18 @@ function render(st) {
     note.hidden = true;
   }
 
+  const staleNote = $("staleRpycNote");
+  if (st.stale_rpyc && st.stale_rpyc.length) {
+    staleNote.hidden = false;
+    staleNote.innerHTML =
+      `⚠ Projenizde ${st.stale_rpyc.length} dosyanın hem .rpy hem eski bir .rpyc kopyası var. ` +
+      `İndirilen zip'in içindeki <code>HYMT_DELETE_THESE_RPYC_FIRST.txt</code> dosyasını açın ve ` +
+      `oradaki .rpyc dosyalarını çevrilen .rpy'leri kopyalamadan ÖNCE oyun klasörünüzden silin — ` +
+      `yoksa Ren'Py eski derlenmiş sürümü çalıştırıp çeviriyle çakışabilir ve oyun içi hataya yol açabilir.`;
+  } else {
+    staleNote.hidden = true;
+  }
+
   $("fileList").innerHTML = st.files.map((f) => `
     <div class="file-row">
       <div class="file-name" title="${f.file}">${f.file}</div>

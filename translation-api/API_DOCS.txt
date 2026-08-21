@@ -268,17 +268,21 @@ Project status object (returned by upload/list/status/start):
 REN'PY PROJECT TRANSLATION
 ================================================================================
 Same workflow as the RPG Maker endpoints, under /renpy instead of /project,
-and returning the same project status object (plus two extra fields).
+and returning the same project status object (plus three extra fields).
 
 Accepted uploads (either shape):
   - A zip of just .rpy / .rpyc script files, at any depth.
   - A whole game folder. Only .rpy/.rpyc members are ever unpacked, so the
     art and audio cost nothing in time or disk.
+  Mobile Ren'Py builds routinely ship with NO .rpy sources at all - .rpyc is
+  a first-class input here, not a fallback, and is read on the same pass.
 
 Always skipped while scanning: tl/ (an existing translation), renpy/ (the
-engine's own source), and cache/, saves/, lib/, __pycache__/.
+engine's own source), cache/, saves/, lib/, __pycache__/, and - important for
+projects that ship both - a .rpyc that has a .rpy sibling in the same folder
+(the .rpy is read instead; see "Stale .rpyc siblings" below).
 
-What gets extracted and translated:
+What gets extracted and translated from readable .rpy sources:
   - say statements, with or without a speaker:  e "Hello."  /  "Narration."
   - quoted speakers: `"???" "Who goes there?"` - the dialogue, not the name
   - extend statements
@@ -291,6 +295,42 @@ What gets extracted and translated:
   - Strings that are only markup ("{i}[points]{/i}") never reach the model.
   - A literal using an escape outside \" \\ \n \t (e.g. Ren'Py's `\ ` hard
     space) is left untranslated rather than rewritten.
+
+What gets extracted from a COMPILED .rpyc with no .rpy source:
+  - Say and Menu text only (dialogue + menu choices) - these are stored as
+    plain strings in the compiled tree, since dialogue is substituted at
+    display time rather than evaluated as code.
+  - NOT YET extracted: screen text (text/textbutton/etc inside a compiled
+    `screen` block). Ren'Py compiles every screen argument - including a
+    plain "Continue" label - into an evaluated expression, not a literal
+    string, so telling a label apart from a style/action name needs a real
+    screen-language decompiler; guessing wrong would corrupt the screen
+    rather than just miss a translation, so this is intentionally left alone
+    for now. A game that ships screens.rpy etc. as regular .rpy source gets
+    that text translated through the normal source-editing path above.
+  - The reader never executes anything named inside the pickle (every class
+    reference resolves to an inert stand-in), and reports the file as
+    unreadable rather than returning a partial result if its internal node
+    budget is ever exhausted.
+
+Stale .rpyc siblings (read this if your project has BOTH a .rpy and its
+precompiled .rpyc for the same script - common even in "compiled" builds):
+  - The .rpyc is never read or double-counted; the .rpy sibling is the only
+    source read for that script.
+  - BUT: once that .rpy is translated, its .rpyc - still sitting untouched in
+    YOUR game folder, since this tool only ever reads it, never writes it -
+    no longer matches the new source. Ren'Py can run the stale compiled
+    version against the new .rpy once both are installed together, which
+    produces crashes with no obvious cause (e.g. "... must return a Text
+    object") the moment a translated line is reached.
+  - The fix travels with the download: any .rpy that got translated and has
+    a .rpyc sibling is listed in "stale_rpyc" (see below) AND in a
+    HYMT_DELETE_THESE_RPYC_FIRST.txt file inside the zip. Delete exactly
+    those .rpyc files from your game folder BEFORE copying in the translated
+    .rpy files - extracting the zip cannot do this for you, since zip
+    extraction only adds/overwrites files, never deletes anything. Ren'Py
+    recompiles a fresh .rpyc automatically on next launch once the stale one
+    is gone.
 
 How translations are applied:
   - .rpy  : written in place, replacing exactly the characters between the
@@ -321,11 +361,17 @@ DELETE /renpy/{project_id}        (auth)  remove immediately
 Same status codes as the RPG Maker endpoints (404 / 409 / 503 / 400).
 
 Extra fields on a Ren'Py status object:
-  "script_files":   <int>   how many .rpy/.rpyc files were unpacked
-  "compiled_slots": <int>   strings that came from .rpyc and therefore travel
-                            via the generated hook rather than a file edit
+  "script_files":   <int>        how many .rpy/.rpyc files were unpacked
+  "compiled_slots": <int>        strings that came from .rpyc and therefore
+                                 travel via the generated hook rather than a
+                                 file edit
+  "stale_rpyc":     [<string>]   .rpyc files now stale relative to a .rpy
+                                 sibling this run translated - empty until a
+                                 download has computed it once; delete these
+                                 exact paths from your game folder first
 
-The download contains only files that actually received a translation.
+The download contains only files that actually received a translation, plus
+HYMT_DELETE_THESE_RPYC_FIRST.txt when stale_rpyc is non-empty.
 Extract it over the game's root directory to install.
 
 

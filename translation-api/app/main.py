@@ -340,6 +340,7 @@ def _status_payload(meta: dict) -> dict:
     if meta.get("kind") == jobs.RENPY:
         payload["script_files"] = meta.get("script_files", 0)
         payload["compiled_slots"] = meta.get("compiled_slots", 0)
+        payload["stale_rpyc"] = meta.get("stale_rpyc", [])
     return payload
 
 
@@ -546,7 +547,10 @@ async def download_renpy(project_id: str):
     the untouched ones back would make the download the size of the game.
     """
     meta = _require_renpy(project_id)
-    output = await asyncio.to_thread(renpy_store.build_output, project_id, meta)
+    output, stale_rpyc = await asyncio.to_thread(renpy_store.build_output, project_id, meta)
+    if stale_rpyc != meta.get("stale_rpyc"):
+        meta["stale_rpyc"] = stale_rpyc
+        renpy_store.save_meta(project_id, meta)
     stem = Path(meta.get("name") or project_id).stem
     return FileResponse(
         output,

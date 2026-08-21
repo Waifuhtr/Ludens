@@ -215,12 +215,36 @@ def purge_expired() -> list[str]:
     return removed
 
 
-def build_output(project_id: str, meta: dict) -> Path:
+_STALE_NOTICE_NAME = "HYMT_DELETE_THESE_RPYC_FIRST.txt"
+
+_STALE_NOTICE_HEADER = """\
+Before copying the files from this zip into your game, delete these exact
+files from your game folder (they will NOT be deleted by extracting this zip
+- zip extraction only adds/overwrites files, it never removes anything):
+
+"""
+
+_STALE_NOTICE_FOOTER = """
+
+Why: your project ships a precompiled .rpyc next to each .rpy. Ren'Py treats
+the .rpy as the source of truth and the .rpyc as a disposable cache, but a
+.rpyc left over from BEFORE translation no longer matches the .rpy you are
+about to install - and Ren'Py running that stale compiled version against the
+new source is what produces crashes like "must return a Text object" the
+moment a translated line is reached. Deleting the .rpyc removes the mismatch:
+Ren'Py recompiles a fresh one from the translated .rpy on next launch.
+"""
+
+
+def build_output(project_id: str, meta: dict) -> tuple[Path, list[str]]:
     """Package the translated scripts.
 
     Only files that actually changed go in the zip. A Ren'Py game folder is
     mostly art and audio, and shipping it back unchanged would turn a few
     hundred kilobytes of script into a download the size of the game.
+
+    Returns the zip path and the list of stale sibling .rpyc files the caller
+    still has on disk from before translation - see `_STALE_NOTICE_FOOTER`.
     """
     from . import inject, tl
 
@@ -245,6 +269,18 @@ def build_output(project_id: str, meta: dict) -> Path:
         if slot.writable
     }
 
+    # A .rpy we just edited may still have an untouched .rpyc sibling sitting
+    # in the user's own game folder from before translation - never inside
+    # this zip (extract() never reads it once a .rpy sibling exists), but
+    # still on their disk, and now stale relative to the file we are about to
+    # hand them.
+    source = source_dir(project_id)
+    stale_rpyc = sorted(
+        name[:-4] + ".rpyc"
+        for name in changed
+        if name.endswith(".rpy") and (source / (name[:-4] + ".rpyc")).is_file()
+    )
+
     generated = tl.write_runtime_translation(staging, units, translations, lang)
 
     output = base / "translated.zip"
@@ -256,5 +292,8 @@ def build_output(project_id: str, meta: dict) -> Path:
                 zf.write(path, name)
         for path in generated:
             zf.write(path, path.relative_to(staging).as_posix())
+        if stale_rpyc:
+            notice = _STALE_NOTICE_HEADER + "\n".join(stale_rpyc) + _STALE_NOTICE_FOOTER
+            zf.writestr(_STALE_NOTICE_NAME, notice)
     shutil.rmtree(staging, ignore_errors=True)
-    return output
+    return output, stale_rpyc

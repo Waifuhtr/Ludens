@@ -66,12 +66,23 @@ def is_skipped(relative: Path) -> bool:
 
 
 def iter_scripts(root: Path):
-    """Yield every script under `root`, in a stable order."""
+    """Yield every script under `root`, in a stable order.
+
+    A `.rpyc` is only read when it has no `.rpy` sibling. Where both exist,
+    Ren'Py itself always treats the `.rpy` as the source of truth and the
+    `.rpyc` as a disposable compiled cache, and this tool follows the same
+    rule - reading both would translate the same dialogue twice, and shipping
+    a `.rpy` we edited next to a `.rpyc` we cannot touch leaves a stale
+    compiled tree on disk that no longer matches the source next to it.
+    """
+    all_paths = {p.relative_to(root) for p in root.rglob("*") if p.is_file()}
     for path in sorted(root.rglob("*")):
         if not path.is_file() or not is_script(path):
             continue
         relative = path.relative_to(root)
         if is_skipped(relative):
+            continue
+        if path.suffix.lower() == ".rpyc" and relative.with_suffix(".rpy") in all_paths:
             continue
         yield path, relative
 

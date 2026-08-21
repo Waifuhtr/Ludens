@@ -1,11 +1,28 @@
 """Read the dialogue out of a compiled .rpyc script.
 
-A .rpyc holds Ren'Py's parsed syntax tree, pickled and deflated. That is
-enough to *read* every line of dialogue, which is what makes it possible to
-translate a game that ships without its .rpy sources. It is not enough to write
-one back: the tree also encodes line numbers and file offsets that the engine
-checks, so translated text reaches these games through a generated translation
-file instead of an edit.
+A .rpyc holds Ren'Py's parsed syntax tree, pickled and deflated. That tree is
+enough to *read* every say statement and menu choice - the AST stores their
+text as plain strings, since dialogue is never evaluated as code, only
+substituted (`[var]`) at display time. That is what makes it possible to
+translate a game that ships without its .rpy sources.
+
+Screen-language text (`text`, `textbutton`, `tooltip`, ... inside a `screen`
+block) is a different problem and is NOT read by this module yet: Ren'Py
+compiles every screen argument - including a plain `"Continue"` label - into
+an evaluated Python expression object, not a literal string, and correctly
+telling "this expression is the button's label" apart from "this expression is
+its style name or action" needs a real screen-language decompiler. Guessing
+at that from the pickle alone risks translating a style or action name instead
+of a label, which corrupts the screen rather than mistranslating it - worse
+than leaving it untranslated. A game that ships `screens.rpy` etc. as regular
+`.rpy` source already gets that text translated through the ordinary source
+editor; this module only matters for the say/menu text in scripts compiled
+without their source.
+
+It is not enough to write a translation back into the .rpyc: the tree also
+encodes line numbers and file offsets that the engine checks, so translated
+text reaches these games through a generated translation file instead of an
+edit - see `tl.py`.
 
 Unpickling a file from a stranger normally means running their code - the
 pickle format can name any importable object and call it. This reader never
@@ -31,7 +48,17 @@ _MENU_NODES = {"Menu"}
 # part-translated game from being translated a second time.
 _TRANSLATE_NODES = {"Translate", "TranslateString", "TranslateBlock", "TranslatePython"}
 
+# Depth-first node budget. Real scripts need a few AST objects per line of
+# dialogue, so a script with tens of thousands of lines stays orders of
+# magnitude under this - it exists to bound a pathological or corrupted file,
+# not real games. If it is ever exhausted, the file is reported as unreadable
+# rather than silently returning a partial scan: a game that is missing lines
+# with no warning is worse than one flagged for a manual look.
 _MAX_NODES = 2_000_000
+
+
+class BudgetExceeded(Exception):
+    """The node walk hit `_MAX_NODES` - the file may not be fully read."""
 
 
 class _Stand:
@@ -39,12 +66,18 @@ class _Stand:
 
     __slots__ = ("__dict__",)
 
-    def __init__(self, *args, **kwargs) -> None:
-        # Ren'Py reconstructs most nodes through __setstate__, but a few are
-        # built with positional arguments; keeping them lets the walker still
-        # see any strings they carry.
+    def __new__(cls, *args, **kwargs):
+        # Overridden (rather than relying on the default object.__new__)
+        # specifically so positional constructor arguments are captured no
+        # matter which pickle opcode built this object - NEWOBJ reconstructs
+        # via __new__ alone and never calls __init__.
+        self = object.__new__(cls)
         if args:
             self.__dict__["_args"] = args
+        return self
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
 
     def __setstate__(self, state) -> None:
         if isinstance(state, dict):
@@ -100,6 +133,16 @@ def _slots(blob: bytes) -> dict[int, bytes]:
     return slots
 
 
+def _inflate(payload: bytes) -> bytes:
+    try:
+        return zlib.decompress(payload)
+    except zlib.error:
+        # Every RPC2 slot shipped by every Ren'Py release so far is deflated,
+        # but the fallback costs nothing and means a future format change
+        # degrades to "read the raw pickle" instead of an outright failure.
+        return payload
+
+
 def _load_tree(path: Path):
     blob = path.read_bytes()
     if blob.startswith(_MAGIC):
@@ -109,17 +152,17 @@ def _load_tree(path: Path):
         payload = slots.get(1)
         if payload is None:
             raise ValueError("no syntax-tree slot in .rpyc")
-        data = zlib.decompress(payload)
+        data = _inflate(payload)
     else:
         # Ren'Py 6.17 and older: the whole file is one deflated pickle.
-        data = zlib.decompress(blob)
+        data = _inflate(blob)
     return _SafeUnpickler(io.BytesIO(data)).load()
 
 
 def _walk(node, sink, seen: set[int], budget: list[int]) -> None:
     """Collect dialogue from the object graph, depth first."""
     if budget[0] <= 0:
-        return
+        raise BudgetExceeded
     budget[0] -= 1
 
     if isinstance(node, (str, bytes, int, float, bool, type(None))):
@@ -154,6 +197,8 @@ def _walk(node, sink, seen: set[int], budget: list[int]) -> None:
 
     if kind in _SAY_NODES:
         what = fields.get("what")
+        if isinstance(what, bytes):
+            what = what.decode("utf-8", errors="replace")
         if isinstance(what, str):
             sink(what, "dialogue")
 
@@ -161,8 +206,13 @@ def _walk(node, sink, seen: set[int], budget: list[int]) -> None:
         items = fields.get("items")
         if isinstance(items, (list, tuple)):
             for item in items:
-                if isinstance(item, (list, tuple)) and item and isinstance(item[0], str):
-                    sink(item[0], "menu")
+                if not isinstance(item, (list, tuple)) or not item:
+                    continue
+                label = item[0]
+                if isinstance(label, bytes):
+                    label = label.decode("utf-8", errors="replace")
+                if isinstance(label, str):
+                    sink(label, "menu")
 
     for value in fields.values():
         _walk(value, sink, seen, budget)
