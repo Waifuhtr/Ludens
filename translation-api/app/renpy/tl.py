@@ -133,15 +133,33 @@ def write_runtime_translation(
     Returns the files created, which is empty when the project had no compiled
     scripts.
     """
-    mapping: dict[str, str] = {}
+    # Two delivery routes, because Ren'Py exposes two different hooks and each
+    # one only sees its own kind of text:
+    #
+    #   say/menu text -> config.say_menu_text_filter, keyed on the untranslated
+    #                    line. The filter is never handed screen text, so
+    #                    putting interface strings in its map would only bloat
+    #                    a file that is read at launch.
+    #   screen text   -> `translate <lang> strings:`, the table Ren'Py's own
+    #                    string translation consults. This is the same shape
+    #                    the launcher's "Generate Translations" produces, so it
+    #                    is the route the engine already expects these in.
+    #
+    # Everything goes in the strings block; only dialogue also goes in the map.
+    dialogue: dict[str, str] = {}
+    strings: dict[str, str] = {}
     for unit in units:
         translated = translations.get(unit.source)
         if translated is None or translated == unit.source:
             continue
-        if any(not slot.writable for slot in unit.slots):
-            mapping[unit.source] = translated
+        compiled = [slot for slot in unit.slots if not slot.writable]
+        if not compiled:
+            continue
+        strings[unit.source] = translated
+        if any(slot.kind in ("dialogue", "menu") for slot in compiled):
+            dialogue[unit.source] = translated
 
-    if not mapping:
+    if not strings:
         return []
 
     lang = language_name(target_lang)
@@ -149,19 +167,23 @@ def write_runtime_translation(
     tl_dir = root / "tl" / lang
     tl_dir.mkdir(parents=True, exist_ok=True)
 
-    json_path = tl_dir / _JSON_NAME
-    json_path.write_text(
-        json.dumps(mapping, ensure_ascii=False, indent=1), encoding="utf-8"
-    )
+    written: list[Path] = []
 
-    hook_path = root / _HOOK_NAME
-    hook_path.write_text(_render_hook(lang), encoding="utf-8")
+    if dialogue:
+        json_path = tl_dir / _JSON_NAME
+        json_path.write_text(
+            json.dumps(dialogue, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+        hook_path = root / _HOOK_NAME
+        hook_path.write_text(_render_hook(lang), encoding="utf-8")
+        written += [json_path, hook_path]
 
     # dict keys are unique by construction, so no `old` can repeat - the
     # condition Ren'Py refuses to start on.
-    pairs = sorted(mapping.items())
+    pairs = sorted(strings.items())
     assert len({source for source, _ in pairs}) == len(pairs)
     strings_path = tl_dir / _STRINGS_NAME
     strings_path.write_text(_render_strings(lang, pairs), encoding="utf-8")
+    written.append(strings_path)
 
-    return [json_path, hook_path, strings_path]
+    return written

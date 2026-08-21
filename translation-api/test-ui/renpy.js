@@ -136,9 +136,10 @@ function render(st) {
   if (st.compiled_slots) {
     note.hidden = false;
     note.textContent =
-      `${st.compiled_slots} metin derlenmiş .rpyc dosyalarından geliyor. Bu dosyalar ` +
-      `düzenlenemediği için çeviriler, indirilen zip'teki hymt_translate.rpy ` +
-      `dosyası ve tl/ klasörü üzerinden oyuna uygulanır.`;
+      `${st.compiled_slots} metin derlenmiş .rpyc dosyalarından geliyor (diyalog, menü ` +
+      `seçenekleri ve arayüz metinleri — buton, sekme, mağaza/istatistik ekranları dahil). ` +
+      `Bu dosyalar düzenlenemediği için çeviriler, indirilen zip'teki tl/ klasörü ve ` +
+      `hymt_translate.rpy üzerinden oyuna uygulanır.`;
   } else {
     note.hidden = true;
   }

@@ -255,17 +255,37 @@ than the real (potentially arbitrary) object it names — and reports a file as
 unreadable rather than silently returning a partial scan if its node budget
 is ever exhausted.
 
-**Not yet covered from a `.rpyc` with no source:** text inside `screen`
-blocks (`text`, `textbutton`, buttons and menus in general). Ren'Py compiles
-every screen argument, including a plain `"Continue"` label, into an
-evaluated expression rather than a literal string — telling "this is the
-button's label" apart from "this is its style name" needs a real
-screen-language decompiler, and guessing wrong would translate a style or
-action name instead, corrupting the screen rather than just missing a
-translation. A game that ships `screens.rpy` (or `gui.rpy`, `menu_screen.rpy`,
-…) as regular `.rpy` source already gets that text translated through the
-ordinary source editor above — this gap is specific to a screen compiled
-*without* its source.
+**Screen text from a compiled `screen` block** — menu buttons, shop and stats
+interfaces, tooltips — is read too, and this is the fiddly part. Ren'Py stores
+*every* screen argument as compiled Python source, so a plain `"Continue"`
+label sits in the same position as a style name, an action or a variable.
+Labels are therefore matched by shape, not position: an argument is accepted
+only when it parses to a bare string literal or an explicit `_()` / `__()`
+marker, never a name, attribute or call.
+
+Measured against a real 56 KB `screens.rpyc` (41 screens, 248 displayables,
+809 compiled expressions), that yields 79 strings — the full Ren'Py menu
+(`Start`, `Save`, `Load`, `Options`, `History`, `Controls`, volume and text-speed
+labels, the whole keyboard/mouse/gamepad help) plus the game's own interface
+(`Oyuncu İstatistikleri`, `Krediler $[fon]`, `Enerji: [energy]`) — while
+excluding every one of these:
+
+| excluded | why |
+|---|---|
+| `key "K_F5"` | a keysym; a `key` statement has no text style |
+| bare `"H"`, `"S"`, `"Shift+A"` | Ren'Py's help screen writes key names bare and wraps only the descriptions in `_()` — translating one renames a control |
+| `scroll="viewport"` | a named `use` argument, i.e. configuration |
+| `Preference("text speed")`, `Start()`, `ShowMenu("save")` | actions |
+| `gui.main_menu_background`, `i.caption`, `title`, `_(message)` | variables and attributes, not literals |
+| `"[config.version]"` | pure interpolation, no words |
+| `{#auto_page}A` | a one-glyph button label — nothing to translate, and a wordy answer would overflow a fixed square button |
+
+What is covered: `text`, `textbutton` and `label` statements, the `tooltip`
+and `alt` properties, and screen titles passed as `use game_menu(_("Options"))`.
+Screen strings are delivered through the `translate <lang> strings:` block —
+the same table Ren'Py's own "Generate Translations" writes — while say/menu
+text goes through the runtime filter, since that filter is never handed screen
+text.
 
 ### Ren'Py endpoints
 

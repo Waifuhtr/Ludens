@@ -297,21 +297,37 @@ What gets extracted and translated from readable .rpy sources:
     space) is left untranslated rather than rewritten.
 
 What gets extracted from a COMPILED .rpyc with no .rpy source:
-  - Say and Menu text only (dialogue + menu choices) - these are stored as
-    plain strings in the compiled tree, since dialogue is substituted at
-    display time rather than evaluated as code.
-  - NOT YET extracted: screen text (text/textbutton/etc inside a compiled
-    `screen` block). Ren'Py compiles every screen argument - including a
-    plain "Continue" label - into an evaluated expression, not a literal
-    string, so telling a label apart from a style/action name needs a real
-    screen-language decompiler; guessing wrong would corrupt the screen
-    rather than just miss a translation, so this is intentionally left alone
-    for now. A game that ships screens.rpy etc. as regular .rpy source gets
-    that text translated through the normal source-editing path above.
+  - Say and Menu text (dialogue + menu choices) - stored as plain strings in
+    the compiled tree, since dialogue is substituted at display time rather
+    than evaluated as code.
+  - Screen text: the `text`, `textbutton` and `label` statements, the
+    `tooltip` and `alt` properties, and screen titles passed as
+    `use game_menu(_("Options"))`. This covers menu buttons and in-game
+    interfaces (shop, stats, inventory screens).
+      Ren'Py compiles EVERY screen argument into Python source, so a plain
+      "Continue" label occupies the same slot as a style name, an action or a
+      variable. Arguments are therefore accepted by shape, not position: only
+      a bare string literal or an explicit _() / __() marker qualifies -
+      never a name, attribute or call.
+      Consequently excluded: key "K_F5" (keysym), bare "H"/"Shift+A" (Ren'Py
+      writes help-screen key names bare and wraps only the descriptions in
+      _()), scroll="viewport" (named use-argument), Preference("text speed")
+      and other actions, gui.* / i.caption / title (not literals),
+      "[config.version]" (pure interpolation), and {#auto_page}A (a one-glyph
+      button label).
   - The reader never executes anything named inside the pickle (every class
     reference resolves to an inert stand-in), and reports the file as
     unreadable rather than returning a partial result if its internal node
     budget is ever exhausted.
+
+Delivery routes differ by kind, because Ren'Py exposes two hooks and each one
+only ever sees its own kind of text:
+  - say/menu text -> config.say_menu_text_filter (game/hymt_translate.rpy +
+                     game/tl/<lang>/hymt_dialogue.json)
+  - screen text   -> game/tl/<lang>/hymt_strings.rpy, a
+                     `translate <lang> strings:` block - the same table
+                     Ren'Py's own "Generate Translations" writes.
+A file is only generated when there is something to put in it.
 
 Stale .rpyc siblings (read this if your project has BOTH a .rpy and its
 precompiled .rpyc for the same script - common even in "compiled" builds):
