@@ -192,11 +192,25 @@ root and the translation is installed.
 | `extend` | `extend " and more."` | **yes** |
 | menu choices and caption | `"Go left":` | **yes** |
 | screen text | `text`, `textbutton`, `tooltip`, `label`, `caption`, `alt` | **yes** (first string only) |
-| `define` / `default` | `define e = Character("Eileen")` | no — character names and constants |
-| python | `$ x = "…"`, `init python:` blocks | no — executable code |
-| `style`, `transform`, `image`, `init` blocks | `font "fonts/x.ttf"` | no |
+| `_("...")` / `__("...")`, anywhere | `Achievement(description=_("..."))`, a `dict()` inside `init python:`, `tooltip _("...")` | **yes** |
+| `define` / `default` (not `_()`-wrapped) | `define e = Character("Eileen")` | no — character names and constants |
+| python (not `_()`-wrapped) | `$ x = "…"`, `init python:` blocks | no — executable code |
+| `style`, `transform`, `image`, `init` blocks (not `_()`-wrapped) | `font "fonts/x.ttf"` | no |
 | `scene`, `show`, `play`, `jump`, `call`, `add`, `use` | asset and label names | no |
 | `translate` blocks and `tl/` | somebody else's translation | no |
+
+`_()` (and its plural form `__()`) is Ren'Py's own "translate this" marker, and
+it means exactly that wherever it appears — inside an `Achievement(...)`
+constructor, a `dict()` three levels deep in a list inside `init python:`, a
+`tooltip` keyword on a `button:` block. Everything else in the table above is
+found by classifying each *statement* (say vs. python vs. asset path), which
+only looks at bracket-depth-0 text and therefore cannot see inside any of
+those; `_()` is found by a second, independent pass over every string literal
+in the file, regardless of what block or call it sits inside, because the
+developer already answered the "is this text" question by writing it. That
+pass never touches a `translate` block's own body, even one that contains a
+`_()` call, and treats a bare literal that merely *ends* in an underscore
+(`get_text_ (x)`) as what it is — a real function call, not the marker.
 
 Three properties make writing back safe:
 
@@ -210,6 +224,13 @@ Three properties make writing back safe:
 - **Markup survives.** `{i}`, `{color=#fff}`, `[player_name]` and the doubled
   literal forms `{{` / `[[` pass through untouched, and a string that is
   *only* markup (`{i}[points]{/i}`) never reaches the model.
+
+Measured against a real ~700-string, 21-file project with dialogue, custom
+shop/stats/task-board overlay screens and achievement metadata spread across
+`init python:` blocks: extraction went from 567 matches (statement
+classification alone) to 1001 once the `_()` pass was added, with every
+result verified byte-identical on write-back and zero leaked asset paths,
+item ids or style names.
 
 ### Compiled scripts (`.rpyc`) — the mobile-game case
 

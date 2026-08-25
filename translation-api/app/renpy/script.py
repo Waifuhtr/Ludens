@@ -11,10 +11,19 @@ this parser is built to be *certain* about what it touches:
   offset.
 * Statements are classified from a "code view" of each line - the same line
   with the inside of every string blanked out - so a keyword mentioned inside
-  dialogue is never mistaken for the statement's own keyword.
-* Anything not positively recognised as dialogue, a menu choice or screen text
-  is left alone. Over-skipping costs a line of translation; under-skipping
-  corrupts a script.
+  dialogue is never mistaken for the statement's own keyword. This only looks
+  at bracket-depth-0 text, on purpose: a string sitting inside some other
+  call (`action=ShowMenu("save")`) is never mistaken for a label.
+* A second, independent pass then finds every string wrapped in `_(...)` or
+  `__(...)`, at *any* depth, wherever it sits - inside an `Achievement(...)`
+  constructor, a dict three levels deep in a list inside `init python:`.
+  `_()` is Ren'Py's own "translate this" marker, so unlike everything else
+  here it needs no statement classification: the developer already answered
+  the question by writing it. Only a `translate` block's own body is held
+  back from this pass, even one that happens to contain a `_()` call.
+* Anything not positively recognised as dialogue, a menu choice, screen text
+  or `_()`-marked is left alone. Over-skipping costs a line of translation;
+  under-skipping corrupts a script.
 
 The offsets are what makes writing back safe: a translation replaces exactly
 the characters between one pair of quotes, so no amount of re-flowing by the
@@ -122,6 +131,7 @@ class Literal:
     triple: bool
     line: int           # 0-based index of the line the literal opens on
     depth: int          # bracket nesting at the opening quote
+    marked: bool         # sits directly inside a `_(...)` / `__(...)` call
 
 
 @dataclass
@@ -134,6 +144,23 @@ class Found:
     quote: str
     kind: str           # dialogue | menu | ui
     line: int
+
+
+def _is_underscore_call(source: str, paren_index: int) -> bool:
+    """True when the '(' at `paren_index` is `_(` or `__(`.
+
+    Walks back over whitespace, then over one contiguous identifier, and
+    compares that whole token - not just the character before the paren - so
+    a real name that merely ends in an underscore (`get_text_ (x)`) is never
+    mistaken for the marker.
+    """
+    cursor = paren_index
+    while cursor > 0 and source[cursor - 1] in " \t":
+        cursor -= 1
+    end = cursor
+    while cursor > 0 and (source[cursor - 1].isalnum() or source[cursor - 1] == "_"):
+        cursor -= 1
+    return source[cursor:end] in ("_", "__")
 
 
 def scan_literals(source: str) -> tuple[list[Literal], list[str]]:
@@ -155,6 +182,13 @@ def scan_literals(source: str) -> tuple[list[Literal], list[str]]:
     depth = 0
     index = 0
     length = len(source)
+    # One entry per currently-open '(' ')' pair, tracking whether it was
+    # opened by a bare `_` or `__` - Ren'Py's own "translate this" marker.
+    # `_("Continue")`, `Achievement(description=_("..."))` and
+    # `flavor=_("..."))` inside a dict two calls deep are all reached this way,
+    # regardless of what statement or block they sit inside; see `marked` on
+    # Literal.
+    paren_marks: list[bool] = []
 
     while index < length:
         char = source[index]
@@ -171,11 +205,22 @@ def scan_literals(source: str) -> tuple[list[Literal], list[str]]:
                 index += 1
             continue
 
-        if char in "([{":
+        if char == "(":
+            paren_marks.append(_is_underscore_call(source, index))
             depth += 1
             index += 1
             continue
-        if char in ")]}":
+        if char == ")":
+            if paren_marks:
+                paren_marks.pop()
+            depth = max(0, depth - 1)
+            index += 1
+            continue
+        if char in "[{":
+            depth += 1
+            index += 1
+            continue
+        if char in "]}":
             depth = max(0, depth - 1)
             index += 1
             continue
@@ -234,6 +279,7 @@ def scan_literals(source: str) -> tuple[list[Literal], list[str]]:
                     triple=triple,
                     line=open_line,
                     depth=depth,
+                    marked=bool(paren_marks) and paren_marks[-1],
                 )
             )
             index = inner_end + len(marker)
@@ -281,9 +327,14 @@ def find_translatable(source: str) -> list[Found]:
 
     found: list[Found] = []
     skip_indent: int | None = None
+    skip_kind: str | None = None
     menu_indent: int | None = None
     continuation = False
     depth = 0
+    # Lines that belong to a `translate` block - somebody else's finished
+    # translation - so the marked-literal pass below can steer clear of it
+    # the same way the main classification does.
+    translate_lines: set[int] = set()
 
     for index, code_line in enumerate(code_lines):
         stripped = code_line.strip()
@@ -310,8 +361,11 @@ def find_translatable(source: str) -> list[Found]:
 
         if skip_indent is not None:
             if indent > skip_indent:
+                if skip_kind == "translate":
+                    translate_lines.add(index)
                 continue
             skip_indent = None
+            skip_kind = None
 
         if menu_indent is not None and indent <= menu_indent:
             menu_indent = None
@@ -324,6 +378,9 @@ def find_translatable(source: str) -> list[Found]:
 
         if first in _BLOCK_SKIP:
             skip_indent = indent
+            skip_kind = first
+            if first == "translate":
+                translate_lines.add(index)
             continue
 
         if first == "menu":
@@ -366,31 +423,54 @@ def find_translatable(source: str) -> list[Found]:
             chosen = candidates[-1]
             kind = "menu" if menu_indent is not None and not prefix else "dialogue"
 
-        raw = source[chosen.start : chosen.end]
-        try:
-            value = unescape(raw)
-        except EscapeError:
-            # An escape this tool will not round-trip. Leaving the line in the
-            # source untranslated is always recoverable; writing back a guess
-            # is not.
-            continue
-        if not value.strip() or not is_translatable(value):
-            continue
-        if chosen.triple:
-            # Triple-quoted bodies are found and skipped rather than
-            # translated: their content is re-indented by Ren'Py and a
-            # rewritten body would change the layout it depends on.
-            continue
+        item = _literal_to_found(source, chosen, kind, index + 1)
+        if item is not None:
+            found.append(item)
 
-        found.append(
-            Found(
-                text=value,
-                start=chosen.start,
-                end=chosen.end,
-                quote=chosen.quote,
-                kind=kind,
-                line=index + 1,
-            )
-        )
+    # `_()` / `__()` is Ren'Py's own "translate this" marker, and it means
+    # exactly that wherever it appears - inside a `python:`/`init python:`
+    # block, an `Achievement(...)` constructor, a dict buried in a list two
+    # levels deep. The scan above only classifies statements at bracket-depth
+    # 0 (so a style name or an action sitting next to a label is never
+    # mistaken for one), which is also why it cannot see into any of those
+    # places. This second pass doesn't classify anything; the developer
+    # already did, explicitly, by writing `_(...)`. Depth-0 literals can never
+    # be marked (marking requires an open paren), so this cannot re-find
+    # anything the loop above already collected.
+    seen = {(f.start, f.end) for f in found}
+    for literal in literals:
+        if not literal.marked or literal.line in translate_lines:
+            continue
+        if (literal.start, literal.end) in seen:
+            continue
+        item = _literal_to_found(source, literal, "ui", literal.line + 1)
+        if item is not None:
+            found.append(item)
 
     return found
+
+
+def _literal_to_found(source: str, literal: Literal, kind: str, line: int) -> Found | None:
+    raw = source[literal.start : literal.end]
+    try:
+        value = unescape(raw)
+    except EscapeError:
+        # An escape this tool will not round-trip. Leaving the line in the
+        # source untranslated is always recoverable; writing back a guess is
+        # not.
+        return None
+    if not value.strip() or not is_translatable(value):
+        return None
+    if literal.triple:
+        # Triple-quoted bodies are found and skipped rather than translated:
+        # their content is re-indented by Ren'Py and a rewritten body would
+        # change the layout it depends on.
+        return None
+    return Found(
+        text=value,
+        start=literal.start,
+        end=literal.end,
+        quote=literal.quote,
+        kind=kind,
+        line=line,
+    )

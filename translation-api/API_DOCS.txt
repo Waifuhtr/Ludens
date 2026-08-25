@@ -289,9 +289,17 @@ What gets extracted and translated from readable .rpy sources:
   - menu choices and the menu caption
   - screen text: text, textbutton, tooltip, label, caption, alt
     (the FIRST string on the line - later strings are style/action arguments)
-  - NOT translated: define/default (incl. Character() names), $ and python
-    blocks, style/transform/image/init blocks, scene/show/play/jump/call/add/
-    use arguments, and any existing translate block.
+  - ANY string wrapped in _(...) or __(...), anywhere in the file, at any
+    nesting depth - inside an Achievement(...) constructor, a dict() three
+    levels deep in a list inside init python:, a tooltip keyword on a
+    button: block, a define. _() is Ren'Py's own "translate this" marker, so
+    it is honoured wherever it appears rather than only at statement level;
+    only a translate block's own body (someone else's finished translation)
+    is excluded even if it happens to contain one. A bare name that merely
+    ENDS in an underscore (get_text_ (x)) is not the marker and is left alone.
+  - NOT translated: define/default and python code that is NOT _()-wrapped,
+    style/transform/image/init blocks, scene/show/play/jump/call/add/use
+    arguments, and any existing translate block.
   - Strings that are only markup ("{i}[points]{/i}") never reach the model.
   - A literal using an escape outside \" \\ \n \t (e.g. Ren'Py's `\ ` hard
     space) is left untranslated rather than rewritten.
