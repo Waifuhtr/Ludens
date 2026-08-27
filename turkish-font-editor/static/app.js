@@ -130,9 +130,33 @@
     badge.textContent = `${data.font_info.family_name} · ${data.font_info.format}`;
     badge.classList.remove("hidden");
 
+    renderFontWarningBanner();
     renderSidebarInfo();
     renderCharList();
     prefetchAllPreviews();
+  }
+
+  function renderFontWarningBanner() {
+    const info = state.fontInfo;
+    const banner = $("#fontWarningBanner");
+    if (!info.has_basic_latin) {
+      banner.innerHTML =
+        "<strong>Bu font temel Latin harfleri içermiyor</strong>" +
+        "Muhtemelen bir ikon/sembol fontu (ör. Font Awesome). Türkçe karakterler mevcut harf " +
+        "tasarımlarından türetildiği için, hiç harf içermeyen bir fontta otomatik oluşturma yapılamaz " +
+        "— aşağıdaki karakterler bu yüzden \"Dikkat Gerekiyor\" olarak işaretli.";
+      banner.classList.remove("hidden");
+    } else if (info.glyphs_remaining < 12) {
+      banner.innerHTML =
+        "<strong>Font glyph kapasitesi sınırına yakın</strong>" +
+        `Bu font zaten ${info.num_glyphs.toLocaleString("tr-TR")} glyph içeriyor; OpenType formatı azami ` +
+        `65.535 glyph'e izin veriyor, yani yeni glyph için yalnızca ${info.glyphs_remaining} yer kaldı ` +
+        "(12 gerekiyor). Sığmayan karakterler için 'Fontu Oluştur' sırasında hata mesajı gösterilecek; " +
+        "hepsini eklemek için fontu önce subset ederek kullanılmayan glyph'leri kaldırmanız gerekir.";
+      banner.classList.remove("hidden");
+    } else {
+      banner.classList.add("hidden");
+    }
   }
 
   // -------------------------------------------------------------- sidebar

@@ -67,6 +67,25 @@ def units_per_em(font: TTFont) -> int:
     return int(font["head"].unitsPerEm)
 
 
+# OpenType/TrueType sfnt formatının kesin sınırı: glyph ID'leri 16 bit
+# olduğu için bir fontta en fazla 65535 glyph olabilir. Bu, kodla aşılamaz;
+# yalnızca sınıra ne kadar yaklaşıldığı tespit edilip kullanıcıya net bir
+# şekilde bildirilebilir.
+MAX_GLYPHS = 65535
+
+_BASE_LATIN_PROBE = "CcGgIiOoSsUu"
+
+
+def has_basic_latin(font: TTFont) -> bool:
+    """Fontta Türkçe karakterlerin türetileceği temel Latin harflerin
+    (en azından yarısının) bulunup bulunmadığını kontrol eder. İkon/sembol
+    fontlarında (ör. Font Awesome) bu harfler hiç yoktur; bu durumda
+    bileşenlerden karakter oluşturmak mümkün değildir."""
+    cmap = best_cmap(font)
+    hits = sum(1 for ch in _BASE_LATIN_PROBE if ord(ch) in cmap)
+    return hits >= len(_BASE_LATIN_PROBE) // 2
+
+
 def get_font_info(font: TTFont, filename: str) -> dict[str, Any]:
     try:
         name_table = font["name"]
@@ -87,6 +106,8 @@ def get_font_info(font: TTFont, filename: str) -> dict[str, Any]:
         "format": "CFF (OpenType)" if is_cff(font) else "TrueType (glyf)",
         "ascender": ascender,
         "descender": descender,
+        "has_basic_latin": has_basic_latin(font),
+        "glyphs_remaining": max(0, MAX_GLYPHS - len(font.getGlyphOrder())),
     }
 
 
@@ -507,6 +528,12 @@ def preview_svg_path(font: TTFont, char_def: R.CharDef, recipe: dict[str, Any]) 
 def add_glyph_to_font(font: TTFont, glyph_name: str, codepoint: int, contours: list[ContourOps], width: float) -> None:
     glyph_order = font.getGlyphOrder()
     if glyph_name not in glyph_order:
+        if len(glyph_order) >= MAX_GLYPHS:
+            raise ValueError(
+                f"Font zaten OpenType formatının izin verdiği azami {MAX_GLYPHS} glyph sınırında "
+                f"({len(glyph_order)} glyph); '{glyph_name}' eklenemiyor. Bu format kısıtı kodla "
+                f"aşılamaz — fontu önce subset ederek kullanılmayan glyph'leri kaldırmanız gerekir."
+            )
         glyph_order.append(glyph_name)
         font.setGlyphOrder(glyph_order)
 

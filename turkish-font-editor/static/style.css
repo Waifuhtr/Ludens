@@ -94,6 +94,13 @@ main { max-width: 1280px; margin: 0 auto; padding: 28px 24px 80px; }
 
 .workspace { display: grid; grid-template-columns: 280px 1fr; gap: 24px; align-items: start; }
 
+.font-warning-banner {
+  grid-column: 1 / -1;
+  background: var(--amber-bg); color: var(--amber); border: 1px solid #edd4a3;
+  border-radius: var(--radius); padding: 14px 18px; font-size: 13.5px; line-height: 1.5;
+}
+.font-warning-banner strong { display: block; margin-bottom: 3px; font-size: 14px; }
+
 .sidebar { position: sticky; top: 78px; display: flex; flex-direction: column; gap: 16px; }
 .sidebar-card {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
