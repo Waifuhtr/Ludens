@@ -126,6 +126,7 @@
     $("#uploadSection").classList.add("hidden");
     $("#workspace").classList.remove("hidden");
     $("#newFontBtn").classList.remove("hidden");
+    $("#subsetSuccessBanner").classList.add("hidden");
     const badge = $("#fontInfoBadge");
     badge.textContent = `${data.font_info.family_name} · ${data.font_info.format}`;
     badge.classList.remove("hidden");
@@ -141,7 +142,7 @@
     const banner = $("#fontWarningBanner");
     if (!info.has_basic_latin) {
       banner.innerHTML =
-        "<strong>Bu font temel Latin harfleri içermiyor</strong>" +
+        "<strong class=\"banner-title\">Bu font temel Latin harfleri içermiyor</strong>" +
         "Muhtemelen bir ikon/sembol fontu (ör. Font Awesome). Türkçe karakterler mevcut harf " +
         "tasarımlarından türetildiği için, hiç harf içermeyen bir fontta otomatik oluşturma yapılamaz " +
         "— aşağıdaki karakterler bu yüzden \"Dikkat Gerekiyor\" olarak işaretli.";
@@ -149,25 +150,72 @@
     } else if (info.glyphs_remaining < info.chars_needing_new_glyphs) {
       const needed = info.chars_needing_new_glyphs;
       const remaining = info.glyphs_remaining;
+      let msg;
       if (remaining === 0) {
-        banner.innerHTML =
-          "<strong>Font glyph kapasitesi dolu</strong>" +
+        msg =
+          "<strong class=\"banner-title\">Font glyph kapasitesi dolu</strong>" +
           `Bu font zaten OpenType formatının izin verdiği azami 65.535 glyph'in tamamını kullanıyor ` +
           `(${info.num_glyphs.toLocaleString("tr-TR")}/65.535), hiç boş yer yok. Yeni çizim gerektiren ` +
-          `${needed} karakterin hiçbiri eklenemeyecek (fontta zaten bulunanlar bundan etkilenmez). ` +
-          "Eklemek için önce fontu subset ederek kullanılmayan glyph'leri kaldırmanız gerekir.";
+          `${needed} karakterin hiçbiri eklenemeyecek (fontta zaten bulunanlar bundan etkilenmez).`;
       } else {
         const missing = needed - remaining;
-        banner.innerHTML =
-          "<strong>Font glyph kapasitesi yetersiz</strong>" +
+        msg =
+          "<strong class=\"banner-title\">Font glyph kapasitesi yetersiz</strong>" +
           `Yeni glyph için yalnızca ${remaining} yer kaldı, ama ${needed} karakter yeni çizim gerektiriyor ` +
-          `— ${missing} tanesi sığmayacak. 'Fontu Oluştur' sırasında hangilerinin eklenemediği raporda ` +
-          "görünecek; hepsini eklemek için fontu önce subset ederek kullanılmayan glyph'leri kaldırmanız gerekir.";
+          `— ${missing} tanesi sığmayacak.`;
       }
+      banner.innerHTML = msg + renderSubsetToolHtml();
       banner.classList.remove("hidden");
+      wireSubsetTool(banner);
     } else {
       banner.classList.add("hidden");
     }
+  }
+
+  function renderSubsetToolHtml() {
+    return `
+      <div class="subset-tool">
+        <p>Yer açmak için fontu subset edebilirsiniz: kullanılmayan glyph'leri kaldırır,
+        Türkçe kompozisyon için gereken temel Latin harfler/aksanlar her zaman korunur.</p>
+        <label class="subset-checkbox">
+          <input type="checkbox" id="subsetCjkPreset" checked />
+          Temel CJK Unified Ideographs bloğunu koru (~20.000 karakter + yaygın noktalama — çoğu kullanım için yeterli)
+        </label>
+        <label class="subset-label" for="subsetKeepText">Ayrıca kesin korunmasını istediğiniz metin/karakterler (opsiyonel):</label>
+        <textarea id="subsetKeepText" class="subset-textarea" rows="2" placeholder="Örn. özel olarak kullandığınız ekstra karakterler ya da kelimeler..."></textarea>
+        <div class="subset-actions">
+          <button id="subsetBtn" type="button" class="btn btn-primary btn-small">Fontu Subset Et</button>
+          <span id="subsetStatus" class="subset-status"></span>
+        </div>
+      </div>`;
+  }
+
+  function wireSubsetTool(banner) {
+    const btn = banner.querySelector("#subsetBtn");
+    const status = banner.querySelector("#subsetStatus");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      status.textContent = "Subset ediliyor (büyük fontlarda 30-60 saniye sürebilir)...";
+      try {
+        const keepText = banner.querySelector("#subsetKeepText").value;
+        const keepCjk = banner.querySelector("#subsetCjkPreset").checked;
+        const res = await fetch("/api/subset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: state.sessionId, keep_text: keepText, keep_cjk_preset: keepCjk }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Subset başarısız.");
+        const { glyphs_before, glyphs_after, glyphs_freed } = data.subset_info;
+        onUploaded(data);
+        const success = $("#subsetSuccessBanner");
+        success.textContent = `Subset tamamlandı: ${glyphs_before.toLocaleString("tr-TR")} → ${glyphs_after.toLocaleString("tr-TR")} glyph (${glyphs_freed.toLocaleString("tr-TR")} glyph boşaldı).`;
+        success.classList.remove("hidden");
+      } catch (err) {
+        status.textContent = "Hata: " + err.message;
+        btn.disabled = false;
+      }
+    });
   }
 
   // -------------------------------------------------------------- sidebar

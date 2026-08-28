@@ -17,6 +17,7 @@ import io
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from fontTools import subset as ftsubset
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.pens.svgPathPen import SVGPathPen
@@ -534,20 +535,20 @@ def preview_svg_path(font: TTFont, char_def: R.CharDef, recipe: dict[str, Any]) 
 
 def add_glyph_to_font(font: TTFont, glyph_name: str, codepoint: int, contours: list[ContourOps], width: float) -> None:
     glyph_order = font.getGlyphOrder()
-    if glyph_name not in glyph_order:
-        if len(glyph_order) >= MAX_GLYPHS:
-            raise ValueError(
-                f"Font zaten OpenType formatının izin verdiği azami {MAX_GLYPHS} glyph sınırında "
-                f"({len(glyph_order)} glyph); '{glyph_name}' eklenemiyor. Bu format kısıtı kodla "
-                f"aşılamaz — fontu önce subset ederek kullanılmayan glyph'leri kaldırmanız gerekir."
-            )
-        glyph_order.append(glyph_name)
-        font.setGlyphOrder(glyph_order)
+    if len(glyph_order) >= MAX_GLYPHS and glyph_name not in glyph_order:
+        raise ValueError(
+            f"Font zaten OpenType formatının izin verdiği azami {MAX_GLYPHS} glyph sınırında "
+            f"({len(glyph_order)} glyph); '{glyph_name}' eklenemiyor. Bu format kısıtı kodla "
+            f"aşılamaz — fontu önce subset ederek kullanılmayan glyph'leri kaldırmanız gerekir."
+        )
 
     bounds = contours_bounds(contours)
     lsb = int(round(bounds[0])) if bounds else 0
 
     if "glyf" in font:
+        if glyph_name not in glyph_order:
+            glyph_order.append(glyph_name)
+            font.setGlyphOrder(glyph_order)
         pen = TTGlyphPen(font.getGlyphSet())
         draw_contours(contours, pen)
         glyph = pen.glyph()
@@ -558,7 +559,27 @@ def add_glyph_to_font(font: TTFont, glyph_name: str, codepoint: int, contours: l
         cff = font["CFF "].cff
         top_dict = cff.topDictIndex[0]
         char_strings = top_dict.CharStrings
-        private = getattr(top_dict, "Private", None)
+        is_cid = hasattr(top_dict, "ROS")
+
+        if is_cid:
+            # CID-keyed CFF (büyük CJK fontlarında yaygın, ör. Source Han
+            # Sans): glyph adları CFF seviyesinde aslında CID numaralarıdır
+            # ve "cidNNNNN" biçiminde temsil edilir; istenen ada bakılmaksızın
+            # boşta bir CID seçilir. Ayrıca her glyph bir FDArray girdisine
+            # (FDSelect ile) atanmış olmalıdır — hinting açısından önemsiz
+            # olduğundan basitçe ilk FD (0) kullanılır.
+            existing_cids = [
+                int(n[3:]) for n in char_strings.keys() if n.startswith("cid") and n[3:].isdigit()
+            ]
+            glyph_name = f"cid{(max(existing_cids) + 1 if existing_cids else 1):05d}"
+            private = top_dict.FDArray[0].Private
+        else:
+            private = getattr(top_dict, "Private", None)
+
+        if glyph_name not in glyph_order:
+            glyph_order.append(glyph_name)
+            font.setGlyphOrder(glyph_order)
+
         pen = T2CharStringPen(width, font.getGlyphSet())
         draw_contours(contours, pen)
         charstring = pen.getCharString(private=private, globalSubrs=cff.GlobalSubrs)
@@ -572,10 +593,23 @@ def add_glyph_to_font(font: TTFont, glyph_name: str, codepoint: int, contours: l
             char_strings.charStrings[glyph_name] = charstring
         if glyph_name not in top_dict.charset:
             top_dict.charset = list(top_dict.charset) + [glyph_name]
+        if is_cid and hasattr(top_dict, "FDSelect"):
+            top_dict.FDSelect.gidArray.append(0)
     else:
         raise ValueError("Desteklenmeyen font formatı: ne 'glyf' ne 'CFF ' tablosu var.")
 
     font["hmtx"][glyph_name] = (int(round(width)), lsb)
+
+    if "vmtx" in font:
+        # Dikey yazı desteği olan fontlarda (çoğu CJK fontu) her glyph'in bir
+        # dikey metrik girdisi de olmak zorunda — yoksa 'vmtx' derlemesi bu
+        # glyph için KeyError verir. Türkçe harfler dikey dizilmeyeceği için
+        # burada makul bir varsayılan (tam em yükseklik, üstten hizalı) yeterli.
+        vhea = font.get("vhea")
+        upm = units_per_em(font)
+        v_advance = int(vhea.ascent - vhea.descent) if vhea is not None else upm
+        tsb = int(round(vhea.ascent - bounds[3])) if (vhea is not None and bounds) else 0
+        font["vmtx"][glyph_name] = (v_advance, tsb)
 
     for table in font["cmap"].tables:
         if table.isUnicode():
@@ -648,3 +682,61 @@ def build_font(original_bytes: bytes, char_recipes: dict[str, dict[str, Any]]) -
 
     out_bytes = save_font(font)
     return out_bytes, report
+
+
+# --------------------------------------------------------------------------
+# Subset (glyph sayısını azaltma)
+# --------------------------------------------------------------------------
+
+# Türkçe kompozisyon için gereken her şeyi (temel Latin harfler, standalone
+# aksan glyph'leri, donor karakterler) kapsayan güvenlik ağı — kullanıcı ne
+# isterse istesin, subset sonrasında karakter oluşturma hâlâ çalışsın diye
+# bu blok HER ZAMAN korunur. Boyutu bir CJK fontunda ihmal edilebilir düzeyde.
+SAFE_KEEP_UNICODES = frozenset(
+    set(range(0x0020, 0x0250))  # ASCII + Latin-1 Supplement + Latin Extended A/B
+    | set(range(0x0300, 0x0370))  # Combining Diacritical Marks
+)
+
+# Kullanıcının isteğe bağlı olarak işaretleyebileceği, yaygın CJK metni için
+# makul bir varsayılan: temel CJK Unified Ideographs bloğu + CJK
+# noktalama/tam genişlik biçimleri. Onbinlerce nadir kullanılan glyph'i
+# (Ext. A/B/C/D/E, dikey/stilistik varyantlar vb.) elerken çoğu kullanım
+# senaryosunu karşılar.
+CJK_PRESET_UNICODES = frozenset(
+    set(range(0x4E00, 0xA000))  # CJK Unified Ideographs (+ Ext. A dahil)
+    | set(range(0x3000, 0x3040))  # CJK Symbols and Punctuation
+    | set(range(0xFF00, 0xFFF0))  # Halfwidth and Fullwidth Forms
+)
+
+
+def subset_font(data: bytes, keep_text: str = "", keep_cjk_preset: bool = False) -> tuple[bytes, dict[str, Any]]:
+    """Fontu, kullanıcının belirttiği metin/karakterler ile Türkçe kompozisyon
+    için gereken temel Latin/aksan glyph'lerini koruyarak küçültür. Glyph
+    sayısı OpenType'ın 65535 sınırına dayanmış büyük (ör. CJK) fontlarda yeni
+    karakterlere yer açmak için kullanılır. GSUB/GPOS kapanışı (closure)
+    fontTools'un subsetter'ı tarafından otomatik olarak korunur."""
+    font = load_font(data)
+    before = len(font.getGlyphOrder())
+
+    keep_unicodes: set[int] = set(SAFE_KEEP_UNICODES)
+    if keep_cjk_preset:
+        keep_unicodes |= CJK_PRESET_UNICODES
+    keep_unicodes.update(ord(ch) for ch in keep_text)
+
+    options = ftsubset.Options()
+    options.glyph_names = True
+    options.notdef_outline = True
+    options.recommended_glyphs = True
+    options.layout_features = ["*"]
+    subsetter = ftsubset.Subsetter(options=options)
+    subsetter.populate(unicodes=keep_unicodes)
+    subsetter.subset(font)
+
+    after = len(font.getGlyphOrder())
+    out_bytes = save_font(font)
+    info = {
+        "glyphs_before": before,
+        "glyphs_after": after,
+        "glyphs_freed": before - after,
+    }
+    return out_bytes, info

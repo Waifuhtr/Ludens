@@ -46,6 +46,19 @@ def _get_session(session_id: str) -> dict[str, Any]:
 CHAR_DEFS_BY_CHAR = {c.char: c for c in R.TURKISH_CHAR_DEFS}
 
 
+def _session_response(session_id: str, font: Any, filename: str) -> dict[str, Any]:
+    analysis = fe.analyze_font(font)
+    font_info = fe.get_font_info(font, filename)
+    font_info["chars_needing_new_glyphs"] = sum(
+        1 for a in analysis if a.recipe.get("mode") in ("compose", "dotless")
+    )
+    return {
+        "session_id": session_id,
+        "font_info": font_info,
+        "chars": [fe.analysis_to_dict(a) for a in analysis],
+    }
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -69,7 +82,6 @@ async def upload_font(font: UploadFile = File(...)) -> dict[str, Any]:
 
     session_id = uuid.uuid4().hex
     filename = font.filename or "font"
-    analysis = fe.analyze_font(parsed)
 
     with _sessions_lock:
         _prune_sessions()
@@ -80,16 +92,7 @@ async def upload_font(font: UploadFile = File(...)) -> dict[str, Any]:
             "created": time.time(),
         }
 
-    font_info = fe.get_font_info(parsed, filename)
-    font_info["chars_needing_new_glyphs"] = sum(
-        1 for a in analysis if a.recipe.get("mode") in ("compose", "dotless")
-    )
-
-    return {
-        "session_id": session_id,
-        "font_info": font_info,
-        "chars": [fe.analysis_to_dict(a) for a in analysis],
-    }
+    return _session_response(session_id, parsed, filename)
 
 
 @app.get("/api/glyphs")
@@ -98,6 +101,31 @@ def list_glyphs(session_id: str, q: str = "", limit: int = 50) -> dict[str, Any]
     limit = max(1, min(limit, 200))
     names = fe.search_glyphs(session["font"], q, limit)
     return {"glyphs": names}
+
+
+class SubsetRequest(BaseModel):
+    session_id: str
+    keep_text: str = ""
+    keep_cjk_preset: bool = False
+
+
+@app.post("/api/subset")
+def subset(req: SubsetRequest) -> dict[str, Any]:
+    session = _get_session(req.session_id)
+    try:
+        out_bytes, info = fe.subset_font(session["original_bytes"], req.keep_text, req.keep_cjk_preset)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Subset işlemi başarısız: {exc}") from exc
+
+    new_font = fe.load_font(out_bytes)
+    with _sessions_lock:
+        session["font"] = new_font
+        session["original_bytes"] = out_bytes
+        session["created"] = time.time()
+
+    response = _session_response(req.session_id, new_font, session["filename"])
+    response["subset_info"] = info
+    return response
 
 
 class PreviewRequest(BaseModel):
