@@ -146,13 +146,24 @@
         "tasarımlarından türetildiği için, hiç harf içermeyen bir fontta otomatik oluşturma yapılamaz " +
         "— aşağıdaki karakterler bu yüzden \"Dikkat Gerekiyor\" olarak işaretli.";
       banner.classList.remove("hidden");
-    } else if (info.glyphs_remaining < 12) {
-      banner.innerHTML =
-        "<strong>Font glyph kapasitesi sınırına yakın</strong>" +
-        `Bu font zaten ${info.num_glyphs.toLocaleString("tr-TR")} glyph içeriyor; OpenType formatı azami ` +
-        `65.535 glyph'e izin veriyor, yani yeni glyph için yalnızca ${info.glyphs_remaining} yer kaldı ` +
-        "(12 gerekiyor). Sığmayan karakterler için 'Fontu Oluştur' sırasında hata mesajı gösterilecek; " +
-        "hepsini eklemek için fontu önce subset ederek kullanılmayan glyph'leri kaldırmanız gerekir.";
+    } else if (info.glyphs_remaining < info.chars_needing_new_glyphs) {
+      const needed = info.chars_needing_new_glyphs;
+      const remaining = info.glyphs_remaining;
+      if (remaining === 0) {
+        banner.innerHTML =
+          "<strong>Font glyph kapasitesi dolu</strong>" +
+          `Bu font zaten OpenType formatının izin verdiği azami 65.535 glyph'in tamamını kullanıyor ` +
+          `(${info.num_glyphs.toLocaleString("tr-TR")}/65.535), hiç boş yer yok. Yeni çizim gerektiren ` +
+          `${needed} karakterin hiçbiri eklenemeyecek (fontta zaten bulunanlar bundan etkilenmez). ` +
+          "Eklemek için önce fontu subset ederek kullanılmayan glyph'leri kaldırmanız gerekir.";
+      } else {
+        const missing = needed - remaining;
+        banner.innerHTML =
+          "<strong>Font glyph kapasitesi yetersiz</strong>" +
+          `Yeni glyph için yalnızca ${remaining} yer kaldı, ama ${needed} karakter yeni çizim gerektiriyor ` +
+          `— ${missing} tanesi sığmayacak. 'Fontu Oluştur' sırasında hangilerinin eklenemediği raporda ` +
+          "görünecek; hepsini eklemek için fontu önce subset ederek kullanılmayan glyph'leri kaldırmanız gerekir.";
+      }
       banner.classList.remove("hidden");
     } else {
       banner.classList.add("hidden");

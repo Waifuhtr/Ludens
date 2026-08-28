@@ -36,7 +36,14 @@ Bounds = tuple[float, float, float, float]
 # --------------------------------------------------------------------------
 
 def load_font(data: bytes) -> TTFont:
-    font = TTFont(io.BytesIO(data))
+    # recalcBBoxes=False: fontTools varsayılan olarak save() sırasında hhea/vhea
+    # ve CFF FontBBox gibi font geneli değerleri TÜM glyph'leri tarayarak yeniden
+    # hesaplıyor. Onbinlerce glyph'i olan (ör. CJK) fontlarda bu, birkaç saniyelik
+    # bir işlemi dakikalar süren bir işleme çeviriyor — üstelik biz sadece birkaç
+    # yeni glyph eklediğimiz ve fontun genel sınırlarını pratikte değiştirmediğimiz
+    # için tamamen gereksiz. Yeni eklenen glyph'lerin kendi sınırları zaten
+    # add_glyph_to_font() içinde ayrıca hesaplanıyor.
+    font = TTFont(io.BytesIO(data), recalcBBoxes=False)
     # lazy=False: tabloları hemen belleğe çöz, sonraki mutasyonlar güvenli olsun
     font.lazy = False
     return font

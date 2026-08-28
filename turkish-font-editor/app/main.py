@@ -80,9 +80,14 @@ async def upload_font(font: UploadFile = File(...)) -> dict[str, Any]:
             "created": time.time(),
         }
 
+    font_info = fe.get_font_info(parsed, filename)
+    font_info["chars_needing_new_glyphs"] = sum(
+        1 for a in analysis if a.recipe.get("mode") in ("compose", "dotless")
+    )
+
     return {
         "session_id": session_id,
-        "font_info": fe.get_font_info(parsed, filename),
+        "font_info": font_info,
         "chars": [fe.analysis_to_dict(a) for a in analysis],
     }
 
