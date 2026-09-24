@@ -199,6 +199,36 @@ def contours_to_svg_path(contours: list[ContourOps]) -> str:
 # Aksan kaynağı bulma (standalone glyph / donor / synthetic)
 # --------------------------------------------------------------------------
 
+def _is_plausible_accent_bounds(bounds: Optional[Bounds], upm: float) -> bool:
+    """Bir aksan işaretinin akla yatkın boyutta olup olmadığını kontrol eder.
+
+    Bazı fontlarda 'cedilla'/'dieresis' gibi standart aksan glyph adları
+    yanlışlıkla alakasız, tam boyutlu bir şekle (ör. hatalı bir precomposed
+    harfe) işaret edebiliyor. Gerçek aksan işaretleri her zaman harfe göre
+    küçüktür (en büyük gerçek örnekler bile ~%30 UPM civarında); bu yüzden
+    %45 UPM üzerindeki bir "aksan" güvenilmez kabul edilip yoksayılır."""
+    if not bounds:
+        return False
+    width = bounds[2] - bounds[0]
+    height = bounds[3] - bounds[1]
+    limit = upm * 0.45
+    return width <= limit and height <= limit
+
+
+def _pick_accent_contours(contours: list[ContourOps], placement: str, upm: float, xh: float) -> list[ContourOps]:
+    picked = []
+    for c in contours:
+        b = contours_bounds([c])
+        if not b:
+            continue
+        _, c_ymin, _, c_ymax = b
+        if placement == "above" and c_ymin > xh * 0.72:
+            picked.append(c)
+        elif placement == "below" and c_ymax < upm * 0.08:
+            picked.append(c)
+    return picked
+
+
 def _find_standalone_accent(font: TTFont, cmap: dict[int, str], accent: str) -> Optional[str]:
     for cp in R.ACCENT_UNICODE_CANDIDATES.get(accent, []):
         name = cmap.get(cp)
@@ -224,17 +254,8 @@ def _extract_donor_accent(font: TTFont, cmap: dict[int, str], accent: str) -> Op
         contours = decompose_glyph(font, name)
         if len(contours) < 2:
             continue  # tek konturlu glyph'ten aksan ayıklanamaz
-        picked = []
-        for c in contours:
-            b = contours_bounds([c])
-            if not b:
-                continue
-            _, c_ymin, _, c_ymax = b
-            if placement == "above" and c_ymin > xh * 0.72:
-                picked.append(c)
-            elif placement == "below" and c_ymax < upm * 0.08:
-                picked.append(c)
-        if picked:
+        picked = _pick_accent_contours(contours, placement, upm, xh)
+        if picked and _is_plausible_accent_bounds(contours_bounds(picked), upm):
             return donor_char, picked
     return None
 
@@ -246,25 +267,39 @@ def resolve_accent(font: TTFont, cmap: dict[int, str], accent: str, base_bounds:
             "contours": [...], "bounds": (xmin,ymin,xmax,ymax) | None,
             "warning": str | None}
     """
+    upm = units_per_em(font)
+    rejected_standalone: Optional[str] = None
     standalone = _find_standalone_accent(font, cmap, accent)
     if standalone:
         contours = decompose_glyph(font, standalone)
-        return {
-            "kind": "glyph", "ref": standalone, "contours": contours,
-            "bounds": contours_bounds(contours), "warning": None,
-        }
+        bounds = contours_bounds(contours)
+        if _is_plausible_accent_bounds(bounds, upm):
+            return {
+                "kind": "glyph", "ref": standalone, "contours": contours,
+                "bounds": bounds, "warning": None,
+            }
+        # Glyph var ama bir aksan işareti için mantıksız büyük (muhtemelen
+        # yanlış adlandırılmış/bozuk) - yoksay, donor/sentetik'e devam et.
+        rejected_standalone = standalone
+
+    size_note = (
+        f"Fontta '{accent}' adıyla bir glyph var ama boyutu bir aksan işareti için "
+        f"mantıksız derecede büyük (muhtemelen yanlış adlandırılmış/bozuk bir glyph), bu yüzden yoksayıldı. "
+        if rejected_standalone else ""
+    )
 
     donor_result = _extract_donor_accent(font, cmap, accent)
     if donor_result:
         donor_char, contours = donor_result
+        warning = size_note + f"'{donor_char}' karakterinden otomatik ayıklanan şekil kullanıldı."
+        if not size_note:
+            warning = f"Standalone '{accent}' glyph'i bulunamadı; şekil '{donor_char}' karakterinden otomatik ayıklandı."
         return {
             "kind": "donor", "ref": donor_char, "contours": contours,
-            "bounds": contours_bounds(contours),
-            "warning": f"Standalone '{accent}' glyph'i bulunamadı; şekil '{donor_char}' karakterinden otomatik ayıklandı.",
+            "bounds": contours_bounds(contours), "warning": warning,
         }
 
     base_width = (base_bounds[2] - base_bounds[0]) if base_bounds else units_per_em(font) * 0.5
-    upm = units_per_em(font)
     raw_contours = synthetic_accent_contours(accent, base_width, upm)
     contours: list[ContourOps] = []
     for poly in raw_contours:
@@ -273,10 +308,13 @@ def resolve_accent(font: TTFont, cmap: dict[int, str], accent: str, base_bounds:
             ops.append(("lineTo", (pt,)))
         ops.append(("closePath", ()))
         contours.append(ops)
+    warning = size_note + "Fontta uygun bir bileşen bulunamadığından yerleşik basit bir vektör şekli kullanıldı. Görsel uyum için elle bir aksan glyph'i seçmeniz önerilir."
+    if not size_note:
+        warning = f"Fontta '{accent}' için hiçbir bileşen bulunamadı; yerleşik basit bir vektör şekli kullanıldı. Görsel uyum için elle bir aksan glyph'i seçmeniz önerilir."
     return {
         "kind": "synthetic", "ref": accent, "contours": contours,
         "bounds": contours_bounds(contours),
-        "warning": f"Fontta '{accent}' için hiçbir bileşen bulunamadı; yerleşik basit bir vektör şekli kullanıldı. Görsel uyum için elle bir aksan glyph'i seçmeniz önerilir.",
+        "warning": warning,
     }
 
 
@@ -292,17 +330,8 @@ def resolve_accent_by_source(font: TTFont, cmap: dict[int, str], accent_source: 
             xh = x_height(font)
             placement = "below" if accent_type == "cedilla" else "above"
             contours = decompose_glyph(font, name)
-            picked = []
-            for c in contours:
-                b = contours_bounds([c])
-                if not b:
-                    continue
-                _, c_ymin, _, c_ymax = b
-                if placement == "above" and c_ymin > xh * 0.72:
-                    picked.append(c)
-                elif placement == "below" and c_ymax < upm * 0.08:
-                    picked.append(c)
-            if picked:
+            picked = _pick_accent_contours(contours, placement, upm, xh)
+            if picked and _is_plausible_accent_bounds(contours_bounds(picked), upm):
                 return {"kind": "donor", "ref": donor_char, "contours": picked, "bounds": contours_bounds(picked), "warning": None}
         return resolve_accent(font, cmap, accent_type, base_bounds)
     if accent_source.startswith(R.SYNTHETIC_PREFIX):
