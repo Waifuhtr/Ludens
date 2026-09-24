@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Türkçe Font Tamamlayıcı</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark">Ç</span>
+      <div>
+        <h1>Türkçe Font Tamamlayıcı</h1>
+        <p>TTF/OTF fontlara eksik Türkçe karakterleri otomatik ekleyin</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="fontInfoBadge" class="font-info-badge hidden"></span>
+      <button id="newFontBtn" class="btn btn-ghost hidden">Yeni Font Yükle</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section id="uploadSection" class="upload-section">
+    <div id="dropzone" class="dropzone">
+      <input type="file" id="fileInput" accept=".ttf,.otf" hidden />
+      <div class="dropzone-icon">📁</div>
+      <p class="dropzone-title">TTF veya OTF font dosyanızı buraya sürükleyin</p>
+      <p class="dropzone-sub">ya da tıklayıp seçin — dosyanız sunucuda geçici olarak işlenir</p>
+      <button class="btn btn-primary" id="browseBtn">Dosya Seç</button>
+    </div>
+    <div id="uploadError" class="error-box hidden"></div>
+  </section>
+
+  <section id="workspace" class="workspace hidden">
+    <div id="subsetSuccessBanner" class="subset-success-banner hidden"></div>
+    <div id="fontWarningBanner" class="font-warning-banner hidden"></div>
+    <aside class="sidebar">
+      <div class="sidebar-card">
+        <h2>Font Bilgisi</h2>
+        <dl id="fontInfoList" class="info-list"></dl>
+      </div>
+      <div class="sidebar-card">
+        <h2>Durum Özeti</h2>
+        <ul id="statusSummary" class="status-summary"></ul>
+      </div>
+      <button id="buildBtn" class="btn btn-primary btn-block">Fontu Oluştur ve İndir</button>
+      <div id="buildReport" class="build-report hidden"></div>
+    </aside>
+
+    <div class="char-list" id="charList"></div>
+  </section>
+</main>
+
+<template id="charRowTemplate">
+  <article class="char-row" data-char="">
+    <button class="char-row-summary" type="button">
+      <span class="char-glyph-badge"><svg class="mini-preview" viewBox="0 0 100 100"></svg></span>
+      <span class="char-meta">
+        <span class="char-title"></span>
+        <span class="char-label"></span>
+      </span>
+      <span class="char-status-pill"></span>
+      <label class="char-include" title="Bu karakteri dahil et">
+        <input type="checkbox" class="include-checkbox" />
+      </label>
+      <span class="chevron">▾</span>
+    </button>
+    <div class="char-editor hidden">
+      <div class="editor-grid">
+        <div class="editor-preview">
+          <svg class="big-preview" viewBox="0 0 1000 1000"></svg>
+          <div class="editor-warnings"></div>
+        </div>
+        <div class="editor-fields"></div>
+      </div>
+    </div>
+  </article>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
